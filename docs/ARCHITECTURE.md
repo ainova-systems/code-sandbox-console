@@ -89,13 +89,15 @@ the create form (`… claude <path>`) or the attach form (`… <name>`).
 
 ## 6. Identity & naming
 
-A repository is identified by a committed `.sandbox` file at its root:
+A repository is identified by a **gitignored, per-working-tree** `.sandbox` file at its root:
 
 ```json
 { "id": "f3c1a2e0-…", "name": "code-sandbox-console" }
 ```
 
-- `id` (UUID) is the stable, canonical identity (survives renames/moves/re-clones).
+- `id` (UUID) is the stable, canonical identity for *this* working tree (it moves with
+  the directory; a fresh clone or a new git worktree gets its own — enabling
+  per-worktree parallel sandboxes, see §12).
 - `name` (folder-derived slug, persisted once) is the human label.
 
 The `sbx` sandbox name is derived as `<name>-<agent>` (e.g.
@@ -191,6 +193,20 @@ The `sbx` executable is resolved at runtime: the Windows installer places it at
   to confirm individually: Attach (resume), Stop, Open Shell.
 - **Single workspace folder.** v0.1 uses `workspaceFolders[0]`; multi-root is out of
   scope.
+- **No persistent attach affordance.** The Attach/Create prompt fires only on activation
+  (`onStartupFinished`). If dismissed, or if the sandbox is stopped mid-session, there is
+  no visible control to re-attach — only the `Sandbox: Attach` command in the palette
+  (which does work: it resumes a stopped sandbox via `sbx run <name>`). Fix: a Status Bar
+  item reflecting state + click-to-Attach, and/or the deferred Sandbox Explorer (§10).
+- **Remote Control is incompatible with the sbx credential proxy (by design).** Claude
+  Code's Remote Control fails inside a sandbox with 401/403. Root cause confirmed: sbx's
+  network policy is allow-all and blocks nothing (`policy log` → `blocked_hosts: []`); the
+  errors come from Anthropic. The proxy forwards `api.anthropic.com` and injects its
+  inference-scoped credential, while the sandbox only ever holds the `proxy-managed`
+  sentinel — so the Remote Control client cannot run the interactive `/login` session or
+  mint the short-lived, purpose-scoped session credentials it needs. Inference-only
+  credentials cannot establish Remote Control sessions (per Claude Code docs). Treat as a
+  known limitation: run Remote Control from a host (non-sandboxed) Claude Code.
 
 ## 12. Deferred scope (post-v0.1)
 
@@ -198,6 +214,19 @@ Sandbox Explorer sidebar (FRD §10), additional agents and multiple terminal tab
 (FR-012, FR-021/022), Rebuild/Delete commands (FR-007), filesystem/network policy
 UIs (§12), and MCP endpoints (§13). The backend already supports several of these
 (`sbx rm`, `--clone`, multi-agent registry), so they are mostly UI/wiring work.
+
+**Parallel sandboxes on the same repo (discussion, undecided).** Today naming pins one
+sandbox per (repo, agent), and direct mount binds the single working tree — so two
+agents on the same tree in parallel would race/corrupt. Two isolation paths enable it:
+*(a) git worktrees* — `git worktree add` a per-task dir on its own branch, mount each
+into its own sandbox; commits land on real branches instantly. Because `.sandbox` is
+gitignored and per-working-tree, **each worktree already gets its own identity and thus
+its own sandbox for free** — "parallel" reduces to "open each worktree as a normal
+single-sandbox project", and the only new work is worktree create/cleanup. *(b)
+`sbx --clone`* — sandbox-managed private clone (host repo read-only), work retrieved via
+the `sandbox-<name>` git remote; stronger isolation, but an extra fetch to integrate.
+Worktrees fit our model best; `--clone` is the harder-isolation alternative. Cost in
+both: N microVMs = N×RAM, and managing multiple instances needs the Explorer/picker UI.
 
 ## 13. Verification status
 

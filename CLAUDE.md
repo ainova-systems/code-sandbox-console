@@ -60,8 +60,9 @@ identity, agents}`; `sandbox → sbx`.
 
 When a sandbox exists, **Attach is the primary action and resume is the default** —
 never steer toward a duplicate (FRD §3/§4). Terminal-first: every agent interaction is
-a terminal window; no chat panels or custom agent UI. `.sandbox` (committed) keys
-identity on a stable id, never on filesystem path or git remote.
+a terminal window; no chat panels or custom agent UI. `.sandbox` (gitignored,
+per-working-tree) keys identity on a stable local id — a fresh clone or git worktree
+gets its own.
 
 ## Conventions
 

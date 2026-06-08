@@ -5,18 +5,34 @@ import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 import { openAgentAttach, openAgentCreate, openShell } from "./terminal";
 
+let statusItem: vscode.StatusBarItem;
+
 export function activate(context: vscode.ExtensionContext): void {
+  statusItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    100
+  );
+
   context.subscriptions.push(
+    statusItem,
     vscode.commands.registerCommand("ainoflowSandbox.createClaude", () =>
       createAndAttach()
     ),
     vscode.commands.registerCommand("ainoflowSandbox.attach", () => attach()),
     vscode.commands.registerCommand("ainoflowSandbox.stop", () => stop()),
-    vscode.commands.registerCommand("ainoflowSandbox.openShell", () =>
-      shell()
-    )
+    vscode.commands.registerCommand("ainoflowSandbox.openShell", () => shell()),
+    // Keep the indicator live without polling: refresh when the window regains
+    // focus (state may have changed via the CLI) and when terminals come/go.
+    vscode.window.onDidChangeWindowState((s) => {
+      if (s.focused) {
+        void refreshStatus();
+      }
+    }),
+    vscode.window.onDidOpenTerminal(() => refreshSoon()),
+    vscode.window.onDidCloseTerminal(() => void refreshStatus())
   );
 
+  void refreshStatus();
   // FR-002: discover on workspace open and offer the resume-first action.
   void discoverAndOffer();
 }
@@ -65,6 +81,7 @@ async function createAndAttach(): Promise<void> {
     } else {
       openAgentAttach(ref);
     }
+    refreshSoon();
   } catch (err) {
     fail("create", err);
   }
@@ -86,6 +103,7 @@ async function attach(): Promise<void> {
       return void createAndAttach();
     }
     openAgentAttach(ref);
+    refreshSoon();
   } catch (err) {
     fail("attach", err);
   }
@@ -112,6 +130,7 @@ async function stop(): Promise<void> {
     vscode.window.showInformationMessage(
       `${DEFAULT_AGENT.label} sandbox stopped. State is preserved.`
     );
+    void refreshStatus();
   } catch (err) {
     fail("stop", err);
   }
@@ -131,8 +150,71 @@ async function shell(): Promise<void> {
       await sandbox.create(ref, host);
     }
     openShell(ref, sbx.hostToSandboxPath(host));
+    refreshSoon();
   } catch (err) {
     fail("open shell", err);
+  }
+}
+
+function setStatus(text: string, tooltip: string, command: string): void {
+  statusItem.text = text;
+  statusItem.tooltip = tooltip;
+  statusItem.command = command;
+  statusItem.show();
+}
+
+/** Refresh now, then again shortly after — sandbox create/start is async. */
+function refreshSoon(): void {
+  void refreshStatus();
+  setTimeout(() => void refreshStatus(), 2500);
+  setTimeout(() => void refreshStatus(), 7000);
+}
+
+/** Reflect the current sandbox state in the status bar (click → attach/create). */
+async function refreshStatus(): Promise<void> {
+  const root = sandbox.workspaceRoot();
+  if (!root || !(await sbx.available())) {
+    statusItem.hide();
+    return;
+  }
+  const identity = await readIdentity(root);
+  if (!identity) {
+    setStatus(
+      "$(add) Claude Sandbox",
+      "No sandbox for this project — click to create",
+      "ainoflowSandbox.createClaude"
+    );
+    return;
+  }
+  let state: sbx.SandboxState;
+  try {
+    state = await sandbox.state(sandbox.ref(identity, DEFAULT_AGENT));
+  } catch {
+    statusItem.hide(); // e.g. not signed in
+    return;
+  }
+  switch (state) {
+    case "running":
+      setStatus(
+        "$(circle-filled) Claude Sandbox",
+        "Running — click to attach",
+        "ainoflowSandbox.attach"
+      );
+      break;
+    case "stopped":
+      setStatus(
+        "$(circle-outline) Claude Sandbox",
+        "Stopped — click to start & attach",
+        "ainoflowSandbox.attach"
+      );
+      break;
+    case "absent":
+      setStatus(
+        "$(add) Claude Sandbox",
+        "Not created — click to create",
+        "ainoflowSandbox.createClaude"
+      );
+      break;
   }
 }
 
