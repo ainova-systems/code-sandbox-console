@@ -30,3 +30,7 @@ Thumbs.db
 # Coverage
 coverage/
 .nyc_output/
+
+# Sandbox identity / local state — per-developer & per-working-tree, never committed
+.sandbox
+.sandbox.local

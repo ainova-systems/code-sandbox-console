@@ -163,6 +163,28 @@ ainoflow
  └─ Gemini Sandbox
 ```
 
+### Repository identity persistence
+
+The Repository ID shall be persisted in a `.sandbox` file at the repository root.
+
+```jsonc
+// .sandbox
+{
+  "id": "f3c1a2e0-...",   // stable UUID; the key sandboxes are associated with
+  "name": "ainoflow"       // human-readable label shown in the Sandbox Explorer
+}
+```
+
+Rules:
+
+* On workspace open, the extension shall read `.sandbox` to discover the associated
+  sandboxes (FR-002). Identity is keyed on `id`, never on the filesystem path or git remote.
+* If `.sandbox` is absent, the extension shall generate it on first sandbox creation (FR-003).
+* `.sandbox` is **gitignored** — it is local, per-developer and per-working-tree, not
+  shared via git. A fresh clone generates a new identity; each git worktree of the repo
+  gets its own `.sandbox`, so it can map to its own sandbox (enables parallel sandboxes
+  per worktree).
+
 ---
 
 ## FR-002 Sandbox Discovery

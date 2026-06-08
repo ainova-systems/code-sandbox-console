@@ -1,0 +1,54 @@
+{
+  "name": "ainoflow-sandbox-terminal",
+  "displayName": "Ainoflow Sandbox Terminal",
+  "description": "Run AI coding agents (Claude Code, Codex, ...) inside isolated, persistent Docker Sandboxes (sbx microVMs) from a VS Code terminal.",
+  "version": "0.0.1",
+  "publisher": "ainoflow",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "ainoflowSandbox.createClaude",
+        "title": "Create Claude Sandbox",
+        "category": "Sandbox"
+      },
+      {
+        "command": "ainoflowSandbox.attach",
+        "title": "Attach",
+        "category": "Sandbox"
+      },
+      {
+        "command": "ainoflowSandbox.stop",
+        "title": "Stop",
+        "category": "Sandbox"
+      },
+      {
+        "command": "ainoflowSandbox.openShell",
+        "title": "Open Shell",
+        "category": "Sandbox"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}

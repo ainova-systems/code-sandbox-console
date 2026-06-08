@@ -1,0 +1,13 @@
+.vscode/**
+src/**
+out/**
+docker/**
+node_modules/**
+**/*.ts
+**/*.map
+esbuild.js
+tsconfig.json
+.gitignore
+.sandbox
+.sandbox.local
+docs/**
