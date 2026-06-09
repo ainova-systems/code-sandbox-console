@@ -1,4 +1,4 @@
-# Architecture — Ainoflow Sandbox Terminal
+# Architecture — Sandbox Console
 
 > **Status:** Draft, tracks the v0.1 walking skeleton.
 > **Companion docs:** [FRD.md](FRD.md) (requirements). Requirement IDs (`FR-0xx`)
@@ -46,7 +46,7 @@ strongly (microVM isolation). The raw-Docker backend was removed.
 
 ```text
 VS Code window
-  └─ Ainoflow Sandbox Terminal (extension, this repo)
+  └─ Sandbox Console (extension, this repo)
         │  spawns the sbx CLI (child_process + native terminal)
         ▼
   sbx CLI  ──────────────►  sbx daemon  ──────────►  microVM sandbox
@@ -268,34 +268,36 @@ half-committed, so state moves from the v0.1 single `.sandbox` file into a `.san
 
 ```text
 .sandbox/
-  config.yaml      # committed   — the shared recipe (compose-like)
-  identity.yaml    # gitignored  — local label only
+  config.yaml      # committed   — shared recipe (compose-like), incl. the project name
+  identity.yaml    # gitignored  — local random id only
+  .gitignore       # committed   — contains `identity.yaml` (self-contained ignore)
   Dockerfile       # committed   — optional custom image, referenced by config
 ```
 
-`.gitignore`: only `.sandbox/identity.yaml` is ignored; `config.yaml` and any `Dockerfile`
-are committed.
+The extension writes `.sandbox/.gitignore` (containing `identity.yaml`) so the local id is
+never committed even without a root .gitignore entry; `config.yaml`, `.gitignore`, and any
+`Dockerfile` are committed.
 
-**Identity (`identity.yaml`)** — just a human label:
+**Identity (`identity.yaml`)** — just a short random id, auto-generated per working copy:
 
 ```yaml
-name: code-sandbox-console
+id: a3f9k
 ```
 
-The v0.1 `id` UUID is **dropped**: the sbx sandbox name derives from `name`
-(`<name>-<key>`), never from a UUID, so the UUID was dead weight (it wasn't in the name,
-so it never disambiguated anything). `name` is persisted once (folder-derived) so it
-survives a folder rename; separate repo copies in different folders get different names
-and therefore independent sandboxes (this is exactly why `tomis-next-v2/v3/v4` are
-separate — different folders → different `name` → different sandbox).
+The **project name moved to `config.yaml`** (shared/committed); the sbx sandbox name is
+`<name>-<key>-<id>`. The local random `id` guarantees that two clones/copies/worktrees of
+the same repo on one host get distinct, conflict-free sandbox names. The id is gitignored
+and generated on first use, so each copy gets its own automatically.
 
 **Recipe (`config.yaml`)** — compose-like, committed, shared:
 
 ```yaml
 version: 1
+name: my-repo                 # shared project label → sandbox name "<name>-<key>-<id>"
 sandboxes:
-  claude:                     # logical key → sandbox name "<identity.name>-claude"
+  claude:                     # logical key (the <key> in the sandbox name)
     agent: claude             # required: sbx agent (claude/shell/codex/opencode/…)
+    title: Backend            # optional: Explorer label (group: optional folder)
     image: myrepo-dev:latest  # optional: image tag to run with (-t)
     dockerfile: Dockerfile    # optional: path under .sandbox/; if set → build `image` from it
     mount: direct             # optional: direct | clone (FS policy; default direct)
@@ -357,7 +359,7 @@ secrets live". **v0.2 ships the template path first** (it matches the user's
 `image`+`dockerfile` model and is verified); kits are the declarative follow-up.
 
 **Instance-first New/Edit (the user edits a sandbox, not a file).** The Explorer drives a
-webview: **New Sandbox** (`ainoflowSandbox.newSandbox`, the `+` in the view title) creates
+webview: **New Sandbox** (`sandboxConsole.newSandbox`, the `+` in the view title) creates
 one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display name;
 for New it also derives the sandbox key/name), **Agent**, **Group** (organises the tree
 into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
@@ -395,3 +397,35 @@ recreate from the new image → re-attach — behind a progress indicator, so th
 runs it by hand. The host workspace is on the mount, so in-progress work survives the
 recreate; only image-baked tooling is refreshed. (When the recipe has no custom image,
 "Rebuild" degrades to a plain Recreate.)
+
+## 17. Explorer actions, lifecycle & credentials (v0.2 final)
+
+**State-gated node actions.** The Explorer surfaces only the actions valid for a node's
+state, enforcing a clear lifecycle — running → Stop → stopped → (Edit / Rebuild / Delete
+instance) → absent → Remove from config:
+
+| State | Inline actions |
+|---|---|
+| running | Stop · Attach · New Terminal |
+| stopped | Attach · New Terminal · Edit · Delete instance · *(Rebuild in context menu)* |
+| absent (defined, no instance) | Create instance · Edit · Remove from config |
+
+Two distinct deletes: **Delete instance** (`sbx rm`, keeps the recipe — recreatable; shown
+when stopped) vs **Remove from config** (drops the entry from `config.yaml`, deleting the
+file if it was the last; shown only when absent, i.e. after the instance is gone). Agent
+terminals are pooled per sandbox and reused — a second `sbx run` is just another attach
+into the same microVM (which would race); they're disposed before stop/destroy/rebuild so
+killing the sandbox leaves no "exit 137"/"exit 1" popup. True parallelism uses worktrees
+or `mount: clone` (§12), each its own sandbox.
+
+**Title & Group (organising).** A spec may carry `title` (Explorer label; for New it also
+seeds the sandbox key/name) and `group` (folders the tree). Groups are organisational
+today and the natural hook for per-group governance (`sbx --profile`) later.
+
+**Two credential layers for the same token.** Provisioning e.g. `github` does two things:
+(1) `sbx secret set` stores it host-side so the proxy authenticates the wire (git HTTPS /
+API) without the token entering the sandbox; (2) for `github`, a best-effort
+`gh auth login --with-token` (token piped over `sbx exec -i`, never in argv) so the `gh`
+CLI itself is authenticated inside — only if `gh` is present and the instance exists,
+silent on failure. The form separates **Global credentials** (host-global, read-only) from
+**Custom credentials** (this sandbox), so it's clear what's shared vs what's being added.

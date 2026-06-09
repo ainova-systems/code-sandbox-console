@@ -56,7 +56,8 @@ ARCHITECTURE §8.
 ## Module map
 
 `src/extension.ts` (commands + startup discovery UX), `config.ts` (`.sandbox/config.yaml`
-recipe parse/write — FR-009), `identity.ts` (`.sandbox/identity.yaml` `{name}`), `sbx.ts`
+recipe parse/write incl. project `name` — FR-009), `identity.ts` (`.sandbox/identity.yaml`
+`{id}` — local random suffix), `sbx.ts`
 (CLI wrapper: lifecycle + `template load`/`secret set`/discovery + `hostToSandboxPath`),
 `images.ts` (custom-image build → save → `template load`, FR-008), `secrets.ts` (provision
 missing secrets, FR-032), `sandbox.ts` (recipe→refs + naming + lifecycle), `ops.ts`
@@ -71,10 +72,10 @@ Dependency direction: `extension → {ops, form, tree, sandbox, identity, agents
 
 When a sandbox exists, **Attach is the primary action and resume is the default** —
 never steer toward a duplicate (FRD §3/§4). Terminal-first: every agent interaction is
-a terminal window; no chat panels or custom agent UI. `.sandbox/identity.yaml` (gitignored,
-per-working-tree) holds the local label (`name`) the sandbox name derives from — a fresh
-clone, copy, or git worktree gets its own. The committed `.sandbox/config.yaml` recipe
-(FR-009) is shared. See ARCHITECTURE §14.
+a terminal window; no chat panels or custom agent UI. The committed `.sandbox/config.yaml`
+recipe (FR-009) holds the shared project `name` + sandboxes; `.sandbox/identity.yaml`
+(gitignored) holds a short random `id`. The sbx sandbox name is `<name>-<key>-<id>` — the
+id keeps clones/copies/worktrees conflict-free. See ARCHITECTURE §14.
 
 ## Conventions
 

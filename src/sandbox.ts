@@ -5,27 +5,41 @@ import { SandboxIdentity } from "./identity";
 import * as sbx from "./sbx";
 
 /**
- * A concrete sandbox for this repo: a recipe spec (FR-009) bound to the local identity,
- * with the derived sbx name. The name is `<identity.name>-<spec.key>` — keyed on the
- * local label (never a UUID), so separate copies/worktrees get independent sandboxes.
- * sbx names allow letters, numbers, hyphens, periods, plus and minus signs.
+ * A concrete sandbox for this repo: a recipe spec (FR-009) plus the derived sbx name. The
+ * name is `<projectName>-<key>-<id>` — projectName is the committed config.name (or the
+ * folder), id is the local random identity — so separate copies/worktrees on one host get
+ * independent, conflict-free sandbox names. sbx names allow letters, digits, `.`, `+`, `-`.
  */
 export interface SandboxRef {
-  identity: SandboxIdentity;
   spec: SandboxSpec;
+  /** sbx sandbox name: `<projectName>-<key>-<id>`. */
   name: string;
+  /** Committed project label (config.name, or the folder name). */
+  projectName: string;
 }
 
 function sanitize(part: string): string {
   return part.replace(/[^A-Za-z0-9.+-]/g, "-");
 }
 
-export function sandboxName(identity: SandboxIdentity, key: string): string {
-  return `${sanitize(identity.name)}-${sanitize(key)}`;
+function folderName(root: vscode.Uri): string {
+  return root.path.split("/").filter(Boolean).pop() ?? "workspace";
 }
 
-export function ref(identity: SandboxIdentity, spec: SandboxSpec): SandboxRef {
-  return { identity, spec, name: sandboxName(identity, spec.key) };
+export function sandboxName(
+  projectName: string,
+  key: string,
+  id: string
+): string {
+  return `${sanitize(projectName)}-${sanitize(key)}-${id}`;
+}
+
+export function ref(
+  projectName: string,
+  spec: SandboxSpec,
+  id: string
+): SandboxRef {
+  return { spec, projectName, name: sandboxName(projectName, spec.key, id) };
 }
 
 /** The implicit recipe when `.sandbox/config.yaml` is absent: a single Claude sandbox. */
@@ -45,8 +59,9 @@ export async function refs(
   identity: SandboxIdentity
 ): Promise<SandboxRef[]> {
   const config = await readConfig(root);
+  const projectName = config?.name ?? folderName(root);
   const specs = config?.sandboxes ?? [defaultSpec()];
-  return specs.map((spec) => ref(identity, spec));
+  return specs.map((spec) => ref(projectName, spec, identity.id));
 }
 
 /** The primary sandbox for the single-action commands (first recipe entry / default). */
@@ -55,7 +70,7 @@ export async function primaryRef(
   identity: SandboxIdentity
 ): Promise<SandboxRef> {
   const all = await refs(root, identity);
-  return all[0] ?? ref(identity, defaultSpec());
+  return all[0]!; // refs() always yields at least the default
 }
 
 export function state(sandbox: SandboxRef): Promise<sbx.SandboxState> {

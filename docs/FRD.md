@@ -1,13 +1,13 @@
 # Functional Requirements Specification
 
-# Ainoflow Sandbox Terminal for VS Code
+# Sandbox Console for VS Code
 
 > **Status:** Initial draft (v0.1)
 > **Document:** Functional Requirements Document (FRD)
 
 ## 1. Overview
 
-Ainoflow Sandbox Terminal provides a terminal-first experience inside VS Code, allowing developers to run AI coding agents such as Claude Code, Codex, Gemini CLI, and future agents inside isolated persistent sandboxes.
+Sandbox Console provides a terminal-first experience inside VS Code, allowing developers to run AI coding agents such as Claude Code, Codex, Gemini CLI, and future agents inside isolated persistent sandboxes.
 
 The experience must feel identical to using a normal terminal window while providing isolation, persistence, and security through sandbox execution.
 
@@ -157,7 +157,7 @@ Agent Type
 Example:
 
 ```text
-ainoflow
+my-repo
  ├─ Claude Sandbox
  ├─ Codex Sandbox
  └─ Gemini Sandbox
@@ -171,7 +171,7 @@ The Repository ID shall be persisted in a `.sandbox` file at the repository root
 // .sandbox
 {
   "id": "f3c1a2e0-...",   // stable UUID; the key sandboxes are associated with
-  "name": "ainoflow"       // human-readable label shown in the Sandbox Explorer
+  "name": "my-repo"       // human-readable label shown in the Sandbox Explorer
 }
 ```
 
@@ -185,11 +185,12 @@ Rules:
   gets its own `.sandbox`, so it can map to its own sandbox (enables parallel sandboxes
   per worktree).
 
-> **v0.2 revision (see ARCHITECTURE §14):** `.sandbox` becomes a **folder**. The local
-> identity is `.sandbox/identity.yaml` holding only `{ name }` (the `id` UUID is dropped —
-> the sandbox name derives from `name`, not the UUID). The shared, **committed** recipe is
-> `.sandbox/config.yaml` (FR-009). Only `.sandbox/identity.yaml` is gitignored;
-> `config.yaml` and any `Dockerfile` are committed. Format is YAML, not JSON.
+> **v0.2 revision (see ARCHITECTURE §14):** `.sandbox` becomes a **folder**. The shared,
+> **committed** `.sandbox/config.yaml` (FR-009) holds the project `name` + sandboxes; the
+> local `.sandbox/identity.yaml` holds only a short random `id`. The sbx sandbox name is
+> `<name>-<key>-<id>` — the id makes clones/copies/worktrees conflict-free. `identity.yaml`
+> is gitignored (the extension writes `.sandbox/.gitignore` for that); `config.yaml`,
+> `.gitignore`, and any `Dockerfile` are committed. Format is YAML, not JSON.
 
 ---
 
@@ -461,6 +462,10 @@ by hand (see ARCHITECTURE §8).
   (shared creds like the Anthropic key).
 * `anthropic` remains satisfied by the host-global OAuth/keychain credential by default
   (no per-sandbox login).
+* The form separates **global** (host-shared, read-only) credentials from **custom**
+  (this-sandbox) ones. For `github`, beyond the proxy secret the extension also runs
+  `gh auth login --with-token` inside the sandbox (best-effort, only if `gh` is present)
+  so the `gh` CLI itself is authenticated — see ARCHITECTURE §17.
 
 ---
 
@@ -507,7 +512,7 @@ Example:
 ```text
 SANDBOXES
 
-Ainoflow
+my-repo
  ├─ Claude
  ├─ Codex
 
@@ -517,6 +522,14 @@ ERP
 CRM
  ├─ Codex
 ```
+
+> **v0.2 (implemented, see ARCHITECTURE §17):** the Explorer is **scoped to the current
+> repo** (not a global cross-repo list). Nodes are this repo's recipe sandboxes
+> (label = `title || key`), optionally grouped into folders by `group`. Per-node actions
+> are **state-gated**, enforcing the lifecycle running → Stop → Edit/Rebuild/Delete
+> instance → Remove from config. Two deletes: **Delete instance** (destroys the sandbox,
+> keeps the definition — recreatable) vs **Remove from config** (drops it from
+> `config.yaml`, shown only once the instance is gone).
 
 ---
 

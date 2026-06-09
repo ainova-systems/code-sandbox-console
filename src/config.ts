@@ -44,6 +44,8 @@ export interface SandboxSpec {
 /** The parsed `.sandbox/config.yaml` recipe. */
 export interface SandboxConfig {
   version: number;
+  /** Shared project label; the sbx sandbox name is `<name>-<key>-<id>` (id is local). */
+  name?: string;
   /** Sandbox specs in the order they appear in the YAML map. */
   sandboxes: SandboxSpec[];
 }
@@ -141,6 +143,7 @@ export function parseConfig(text: string): SandboxConfig {
   }
   const root = asRecord(doc, "config");
   const version = typeof root.version === "number" ? root.version : 1;
+  const name = typeof root.name === "string" ? root.name : undefined;
   const sandboxesRaw = asRecord(root.sandboxes ?? {}, "sandboxes");
   const sandboxes = Object.keys(sandboxesRaw).map((key) =>
     parseSpec(key, sandboxesRaw[key])
@@ -148,7 +151,7 @@ export function parseConfig(text: string): SandboxConfig {
   if (sandboxes.length === 0) {
     throw new ConfigError("no sandboxes defined");
   }
-  return { version, sandboxes };
+  return { version, name, sandboxes };
 }
 
 function configUri(root: vscode.Uri): vscode.Uri {
@@ -211,7 +214,12 @@ export async function writeConfig(
     }
     sandboxes[s.key] = entry;
   }
-  const text = stringify({ version: config.version || 1, sandboxes });
+  const doc: Record<string, unknown> = { version: config.version || 1 };
+  if (config.name) {
+    doc.name = config.name;
+  }
+  doc.sandboxes = sandboxes;
+  const text = stringify(doc);
   await vscode.workspace.fs.createDirectory(
     vscode.Uri.joinPath(root, CONFIG_DIR)
   );
@@ -239,5 +247,9 @@ export async function removeFromConfig(
     }
     return;
   }
-  await writeConfig(root, { version: config.version || 1, sandboxes });
+  await writeConfig(root, {
+    version: config.version || 1,
+    name: config.name,
+    sandboxes,
+  });
 }

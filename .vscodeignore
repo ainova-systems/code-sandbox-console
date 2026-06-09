@@ -8,6 +8,7 @@ node_modules/**
 esbuild.js
 tsconfig.json
 .gitignore
-.sandbox
-.sandbox.local
+.sandbox/**
 docs/**
+CLAUDE.md
+*.vsix

@@ -13,7 +13,7 @@ import * as sbx from "./sbx";
  * actions reuse ops.ts so the Explorer and palette commands never drift.
  */
 
-const VIEW_ID = "ainoflowSandboxExplorer";
+const VIEW_ID = "sandboxConsoleExplorer";
 
 class SandboxNode extends vscode.TreeItem {
   constructor(
@@ -34,6 +34,8 @@ class SandboxNode extends vscode.TreeItem {
         ? "circle-outline"
         : "add"
     );
+    // No single-click action — clicking only selects; use the inline buttons (Attach to
+    // open the agent, New Terminal for a shell). VS Code has no separate double-click event.
   }
 }
 
@@ -142,7 +144,7 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
 
 function reportError(action: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
-  vscode.window.showErrorMessage(`Ainoflow Sandbox: ${action} failed. ${msg}`);
+  vscode.window.showErrorMessage(`Sandbox Console: ${action} failed. ${msg}`);
 }
 
 /** Register the Explorer view + its per-node commands. */
@@ -172,6 +174,8 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
       }
       await fn(root, ref);
       provider.refresh();
+      // sbx state can lag the command (e.g. stop takes a moment) — re-check shortly after.
+      setTimeout(() => provider.refresh(), 2500);
     } catch (err) {
       reportError(action, err);
     }
@@ -179,33 +183,28 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     view,
-    vscode.commands.registerCommand("ainoflowSandbox.refresh", () =>
+    vscode.commands.registerCommand("sandboxConsole.refresh", () =>
       provider.refresh()
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.attach",
+      "sandboxConsole.item.attach",
       (node?: SandboxNode) =>
         withNode(node, "attach", (root, ref) => ops.createOrAttach(root, ref))
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.create",
-      (node?: SandboxNode) =>
-        withNode(node, "create", (root, ref) => ops.createOrAttach(root, ref))
-    ),
-    vscode.commands.registerCommand(
-      "ainoflowSandbox.item.stop",
+      "sandboxConsole.item.stop",
       (node?: SandboxNode) =>
         withNode(node, "stop", async (_root, ref) => {
           await ops.stopRef(ref);
         })
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.shell",
+      "sandboxConsole.item.shell",
       (node?: SandboxNode) =>
         withNode(node, "open shell", (root, ref) => ops.shellRef(root, ref))
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.rebuild",
+      "sandboxConsole.item.rebuild",
       (node?: SandboxNode) =>
         withNode(node, "rebuild", async (root, ref) => {
           const ok = await vscode.window.showWarningMessage(
@@ -219,14 +218,14 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
         })
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.edit",
+      "sandboxConsole.item.edit",
       (node?: SandboxNode) =>
         withNode(node, "edit", async (root, ref) => {
           await openForm(context, root, { kind: "edit", key: ref.spec.key });
         })
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.destroy",
+      "sandboxConsole.item.destroy",
       (node?: SandboxNode) =>
         withNode(node, "delete instance", async (_root, ref) => {
           const ok = await vscode.window.showWarningMessage(
@@ -240,7 +239,7 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
         })
     ),
     vscode.commands.registerCommand(
-      "ainoflowSandbox.item.remove",
+      "sandboxConsole.item.remove",
       (node?: SandboxNode) =>
         withNode(node, "remove", async (root, ref) => {
           const ok = await vscode.window.showWarningMessage(

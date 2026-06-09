@@ -57,21 +57,54 @@ function openAgentTerminal(
   return terminal;
 }
 
-/** Close (and forget) every tracked terminal (agent + shells) for a sandbox. Called
- * before stop/destroy/rebuild so killing the sandbox doesn't leave "exit 137" popups. */
-export function disposeSandboxTerminals(name: string): void {
-  const agent = agentTerminals.get(name);
-  if (agent) {
-    agentTerminals.delete(name);
-    agent.dispose();
+/** Does this terminal belong to the given sandbox? Matches by the sandbox name embedded
+ * in the tab title (survives Extension Host reloads) or in the launch args. */
+function terminalMatches(t: vscode.Terminal, name: string): boolean {
+  if (t.name.includes(name)) {
+    return true;
   }
-  const shells = shellTerminals.get(name);
-  if (shells) {
-    shellTerminals.delete(name);
-    for (const t of shells) {
+  const args = (t.creationOptions as vscode.TerminalOptions)?.shellArgs;
+  return Array.isArray(args) && args.includes(name);
+}
+
+/**
+ * Close every terminal (agent + shells, tracked or reload-restored) for a sandbox and
+ * RESOLVE only once they've actually closed. Callers await this before `sbx stop`/`rm` so
+ * the sandbox isn't torn out from under a live `sbx run`/`exec` client — that self-exit is
+ * what produces the "terminated with exit code 1/137" popup.
+ */
+export function disposeSandboxTerminals(name: string): Promise<void> {
+  agentTerminals.delete(name);
+  shellTerminals.delete(name);
+  const targets = vscode.window.terminals.filter((t) => terminalMatches(t, name));
+  if (targets.length === 0) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    let remaining = targets.length;
+    let finished = false;
+    const finish = (): void => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      sub.dispose();
+      clearTimeout(timer);
+      resolve();
+    };
+    const sub = vscode.window.onDidCloseTerminal((closed) => {
+      if (targets.includes(closed)) {
+        remaining--;
+        if (remaining <= 0) {
+          finish();
+        }
+      }
+    });
+    const timer = setTimeout(finish, 4000); // safety: never hang if a close event is missed
+    for (const t of targets) {
       t.dispose();
     }
-  }
+  });
 }
 
 /**
@@ -93,19 +126,22 @@ export function openAgentCreate(
   args.push(sandbox.spec.agent, workspace);
   return openAgentTerminal(
     sandbox.name,
-    `${agentLabel(sandbox.spec.agent)} Sandbox`,
+    `${agentLabel(sandbox.spec.agent)} · ${sandbox.name}`,
     args
   );
 }
 
 /**
- * Attach to an existing sandbox by name: `sbx run <name>` resumes it if stopped and
- * attaches the agent (FR-004 + FR-005). Reuses the existing terminal if one is live.
+ * Attach to an existing sandbox: `sbx run <name>` resumes the sandbox if stopped. Reuses a
+ * live terminal (the same session) when present; otherwise launches the agent fresh. We do
+ * NOT auto-pass `--continue`: closing a terminal ends that attach session, so forcing a
+ * resume could spawn a second agent over interrupted work. Resume a conversation explicitly
+ * inside the agent (e.g. Claude's `/resume`) when you actually want it.
  */
 export function openAgentAttach(sandbox: SandboxRef): vscode.Terminal {
   return openAgentTerminal(
     sandbox.name,
-    `${agentLabel(sandbox.spec.agent)} Sandbox`,
+    `${agentLabel(sandbox.spec.agent)} · ${sandbox.name}`,
     ["run", sandbox.name]
   );
 }
@@ -119,7 +155,7 @@ export function openShell(
   sandbox: SandboxRef,
   workspaceInside: string
 ): vscode.Terminal {
-  const terminal = term(`Shell · ${sandbox.identity.name}`, [
+  const terminal = term(`Shell · ${sandbox.name}`, [
     "exec",
     "-it",
     "-w",

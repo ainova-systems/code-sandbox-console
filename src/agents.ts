@@ -2,7 +2,7 @@
  * Agent registry. The id maps directly to an `sbx` agent (`sbx run <agent>`). The full
  * set is whatever the installed sbx supports — discover it live with `sbx.listAgents()`
  * (this static table just supplies nice labels and a fallback). Custom/forked agents
- * (agent-kits) resolve to a title-cased label via `agentDef()`.
+ * (agent-kits) resolve to a title-cased label via `agentLabel()`.
  */
 export interface AgentDef {
   /** sbx agent id, also used in the sandbox name. */
@@ -33,9 +33,4 @@ export function agentLabel(id: string): string {
     return known.label;
   }
   return id.charAt(0).toUpperCase() + id.slice(1);
-}
-
-/** Resolve an AgentDef for any agent id, synthesising one for unknown/discovered ids. */
-export function agentDef(id: string): AgentDef {
-  return AGENTS[id] ?? { id, label: agentLabel(id) };
 }

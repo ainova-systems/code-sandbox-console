@@ -3,6 +3,7 @@ import { promisify } from "util";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { existsSync } from "fs";
 import { CONFIG_DIR, SandboxSpec } from "./config";
 import * as sbx from "./sbx";
 
@@ -21,8 +22,32 @@ interface RunResult {
   code: number;
 }
 
+let cachedDocker: string | undefined;
+
+/**
+ * Resolve the docker executable. Docker Desktop on Windows isn't always on the PATH that
+ * execFile sees, so check its default install location first; fall back to the bare name.
+ */
+function dockerPath(): string {
+  if (cachedDocker) {
+    return cachedDocker;
+  }
+  if (process.platform === "win32") {
+    const pf = process.env.ProgramFiles;
+    const candidate = pf
+      ? path.join(pf, "Docker", "Docker", "resources", "bin", "docker.exe")
+      : undefined;
+    if (candidate && existsSync(candidate)) {
+      cachedDocker = candidate;
+      return cachedDocker;
+    }
+  }
+  cachedDocker = process.platform === "win32" ? "docker.exe" : "docker";
+  return cachedDocker;
+}
+
 function docker(args: string[]): Promise<RunResult> {
-  return pexec("docker", args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024 })
+  return pexec(dockerPath(), args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024 })
     .then(({ stdout, stderr }) => ({
       stdout: stdout.toString(),
       stderr: stderr.toString(),

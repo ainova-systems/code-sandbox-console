@@ -28,8 +28,3 @@ export const SERVICES: Record<string, ServiceDef> = {
 export function serviceLabel(id: string): string {
   return SERVICES[id]?.label ?? id;
 }
-
-/** Resolve a ServiceDef for any service id, synthesising one for unknown/discovered ids. */
-export function serviceDef(id: string): ServiceDef {
-  return SERVICES[id] ?? { id, label: id };
-}

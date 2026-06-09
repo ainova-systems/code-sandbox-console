@@ -270,6 +270,7 @@ function runWithStdin(args: string[], input: string): Promise<RunResult> {
       resolve({ stdout, stderr: stderr || err.message, code: 1 })
     );
     child.on("close", (code) => resolve({ stdout, stderr, code: code ?? 1 }));
+    child.stdin.on("error", () => undefined); // ignore EPIPE if the process exits early
     child.stdin.write(input);
     child.stdin.end();
   });

@@ -8,7 +8,7 @@ import {
   SandboxSpec,
   writeConfig,
 } from "./config";
-import { ensureIdentity, readIdentity } from "./identity";
+import { ensureIdentity } from "./identity";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
@@ -56,12 +56,11 @@ export async function openForm(
   root: vscode.Uri,
   mode: FormMode
 ): Promise<void> {
-  const [agentIds, serviceIds, secretList, config, identity] = await Promise.all([
+  const [agentIds, serviceIds, secretList, config] = await Promise.all([
     sbx.listAgents(),
     sbx.listSecretServices(),
     sbx.listSecrets(),
     readConfig(root).catch(() => undefined),
-    readIdentity(root),
   ]);
   const globals = [
     ...new Set(
@@ -75,7 +74,7 @@ export async function openForm(
       ? config?.sandboxes.find((s) => s.key === mode.key)
       : undefined;
 
-  const name = identity?.name ?? folderName(root);
+  const projectName = config?.name ?? folderName(root);
   const env = current
     ? current.dockerfile
       ? "dockerfile"
@@ -88,8 +87,8 @@ export async function openForm(
     mode: mode.kind,
     heading:
       mode.kind === "edit"
-        ? `Edit ${name}-${mode.kind === "edit" ? mode.key : ""}`
-        : `New sandbox in ${name}`,
+        ? `Edit ${projectName} · ${mode.key}`
+        : `New sandbox in ${projectName}`,
     agents: agentIds.map((id) => ({ id, label: agentLabel(id) })),
     agentLocked: mode.kind === "edit",
     services: customServices,
@@ -105,7 +104,7 @@ export async function openForm(
   };
 
   const panel = vscode.window.createWebviewPanel(
-    "ainoflowSandboxForm",
+    "sandboxConsoleForm",
     mode.kind === "edit" ? "Edit Sandbox" : "New Sandbox",
     vscode.ViewColumn.Active,
     { enableScripts: true }
@@ -123,7 +122,7 @@ export async function openForm(
           await apply(root, mode, msg.payload, current);
           panel.dispose();
           await vscode.commands
-            .executeCommand("ainoflowSandbox.refresh")
+            .executeCommand("sandboxConsole.refresh")
             .then(undefined, () => undefined);
         } catch (err) {
           vscode.window.showErrorMessage(
@@ -149,6 +148,7 @@ async function apply(
     version: 1,
     sandboxes: [],
   };
+  const projectName = config.name ?? folderName(root);
 
   let key: string;
   let agent: string;
@@ -174,7 +174,7 @@ async function apply(
   let dockerfile: string | undefined;
   let generatedDockerfile: string | undefined;
   if (payload.env === "dockerfile") {
-    image = `${identity.name.toLowerCase()}-${key}:latest`;
+    image = `${projectName.toLowerCase()}-${key}:latest`;
     dockerfile = `${key}.Dockerfile`;
     const madeUri = await ensureDockerfile(root, key);
     if (madeUri) {
@@ -203,9 +203,13 @@ async function apply(
   const sandboxes = exists
     ? config.sandboxes.map((s) => (s.key === key ? spec : s))
     : [...config.sandboxes, spec];
-  await writeConfig(root, { version: config.version || 1, sandboxes });
+  await writeConfig(root, {
+    version: config.version || 1,
+    name: projectName,
+    sandboxes,
+  });
 
-  const ref = sandbox.ref(identity, spec);
+  const ref = sandbox.ref(projectName, spec, identity.id);
 
   if (mode.kind === "new") {
     if (generatedDockerfile) {
@@ -213,8 +217,8 @@ async function apply(
         `Saved. Edit .sandbox/${generatedDockerfile} (set FROM + tools), then Attach the sandbox to build it.`
       );
     } else {
-      await ops.createOrAttach(root, ref); // builds image, prompts secrets, attaches
-      await publishPortsSafe(ref.name, spec.ports);
+      // createOrAttach builds the image, prompts secrets, attaches, and publishes ports.
+      await ops.createOrAttach(root, ref);
     }
     return;
   }
@@ -242,8 +246,7 @@ async function apply(
       "Rebuild"
     );
     if (choice === "Rebuild") {
-      await ops.rebuildRef(root, ref);
-      await publishPortsSafe(ref.name, spec.ports);
+      await ops.rebuildRef(root, ref); // also publishes ports once running
     }
     return;
   }

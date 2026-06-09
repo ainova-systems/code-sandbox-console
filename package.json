@@ -1,15 +1,39 @@
 {
-  "name": "ainoflow-sandbox-terminal",
-  "displayName": "Ainoflow Sandbox Terminal",
-  "description": "Run AI coding agents (Claude Code, Codex, ...) inside isolated, persistent Docker Sandboxes (sbx microVMs) from a VS Code terminal.",
-  "version": "0.0.1",
-  "publisher": "ainoflow",
+  "name": "sandbox-console",
+  "displayName": "Sandbox Console",
+  "description": "Run AI coding agents (Claude Code, Codex, Gemini, …) in isolated, persistent Docker Sandboxes (sbx microVMs) — terminal-first, from a Sandbox Explorer, with no manual container management.",
+  "version": "0.2.0",
+  "publisher": "ainova-systems",
+  "license": "MIT",
+  "author": {
+    "name": "Dmitrij Zykovic",
+    "url": "https://www.ainovasystems.com"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
+  "keywords": [
+    "docker",
+    "sandbox",
+    "sbx",
+    "microvm",
+    "claude",
+    "agent",
+    "terminal",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ainova-systems/code-sandbox-console.git"
+  },
+  "homepage": "https://github.com/ainova-systems/code-sandbox-console#readme",
+  "bugs": {
+    "url": "https://github.com/ainova-systems/code-sandbox-console/issues"
+  },
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished"
@@ -17,86 +41,80 @@
   "contributes": {
     "commands": [
       {
-        "command": "ainoflowSandbox.createClaude",
+        "command": "sandboxConsole.createClaude",
         "title": "Create Claude Sandbox",
         "category": "Sandbox"
       },
       {
-        "command": "ainoflowSandbox.attach",
-        "title": "Attach",
+        "command": "sandboxConsole.attach",
+        "title": "Connect",
         "category": "Sandbox"
       },
       {
-        "command": "ainoflowSandbox.stop",
+        "command": "sandboxConsole.stop",
         "title": "Stop",
         "category": "Sandbox"
       },
       {
-        "command": "ainoflowSandbox.openShell",
-        "title": "Open Shell",
+        "command": "sandboxConsole.openShell",
+        "title": "Shell",
         "category": "Sandbox"
       },
       {
-        "command": "ainoflowSandbox.rebuild",
+        "command": "sandboxConsole.rebuild",
         "title": "Rebuild",
         "category": "Sandbox"
       },
       {
-        "command": "ainoflowSandbox.newSandbox",
+        "command": "sandboxConsole.newSandbox",
         "title": "New Sandbox",
         "category": "Sandbox",
         "icon": "$(add)"
       },
       {
-        "command": "ainoflowSandbox.refresh",
+        "command": "sandboxConsole.refresh",
         "title": "Refresh",
         "category": "Sandbox",
         "icon": "$(refresh)"
       },
       {
-        "command": "ainoflowSandbox.item.attach",
-        "title": "Attach",
+        "command": "sandboxConsole.item.attach",
+        "title": "Connect",
         "category": "Sandbox",
         "icon": "$(plug)"
       },
       {
-        "command": "ainoflowSandbox.item.create",
-        "title": "Create instance",
-        "category": "Sandbox",
-        "icon": "$(run)"
-      },
-      {
-        "command": "ainoflowSandbox.item.stop",
+        "command": "sandboxConsole.item.stop",
         "title": "Stop",
         "category": "Sandbox",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "ainoflowSandbox.item.shell",
-        "title": "New Terminal",
+        "command": "sandboxConsole.item.shell",
+        "title": "Shell",
         "category": "Sandbox",
-        "icon": "$(terminal)"
+        "icon": "$(terminal-bash)"
       },
       {
-        "command": "ainoflowSandbox.item.rebuild",
+        "command": "sandboxConsole.item.rebuild",
         "title": "Rebuild",
         "category": "Sandbox",
         "icon": "$(tools)"
       },
       {
-        "command": "ainoflowSandbox.item.edit",
+        "command": "sandboxConsole.item.edit",
         "title": "Edit",
         "category": "Sandbox",
         "icon": "$(edit)"
       },
       {
-        "command": "ainoflowSandbox.item.destroy",
+        "command": "sandboxConsole.item.destroy",
         "title": "Delete instance",
         "category": "Sandbox",
         "icon": "$(trash)"
       },
       {
-        "command": "ainoflowSandbox.item.remove",
+        "command": "sandboxConsole.item.remove",
         "title": "Remove from config",
         "category": "Sandbox",
         "icon": "$(close)"
@@ -105,104 +123,89 @@
     "views": {
       "explorer": [
         {
-          "id": "ainoflowSandboxExplorer",
+          "id": "sandboxConsoleExplorer",
           "name": "Sandboxes"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "ainoflowSandboxExplorer",
-        "contents": "No sandboxes yet for this repo.\n[New Sandbox](command:ainoflowSandbox.newSandbox)\n[Create Claude Sandbox](command:ainoflowSandbox.createClaude)"
+        "view": "sandboxConsoleExplorer",
+        "contents": "No sandboxes yet for this repo.\n[New Sandbox](command:sandboxConsole.newSandbox)\n[Create Claude Sandbox](command:sandboxConsole.createClaude)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "ainoflowSandbox.newSandbox",
-          "when": "view == ainoflowSandboxExplorer",
+          "command": "sandboxConsole.newSandbox",
+          "when": "view == sandboxConsoleExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "ainoflowSandbox.refresh",
-          "when": "view == ainoflowSandboxExplorer",
+          "command": "sandboxConsole.refresh",
+          "when": "view == sandboxConsoleExplorer",
           "group": "navigation@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "ainoflowSandbox.item.stop",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.running",
+          "command": "sandboxConsole.item.stop",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.running",
           "group": "inline@1"
         },
         {
-          "command": "ainoflowSandbox.item.create",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.absent",
+          "command": "sandboxConsole.item.attach",
+          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\./",
           "group": "inline@2"
         },
         {
-          "command": "ainoflowSandbox.item.attach",
-          "when": "view == ainoflowSandboxExplorer && (viewItem == sandbox.running || viewItem == sandbox.stopped)",
-          "group": "inline@2"
-        },
-        {
-          "command": "ainoflowSandbox.item.shell",
-          "when": "view == ainoflowSandboxExplorer && (viewItem == sandbox.running || viewItem == sandbox.stopped)",
-          "group": "inline@3"
-        },
-        {
-          "command": "ainoflowSandbox.item.edit",
-          "when": "view == ainoflowSandboxExplorer && (viewItem == sandbox.stopped || viewItem == sandbox.absent)",
+          "command": "sandboxConsole.item.edit",
+          "when": "view == sandboxConsoleExplorer && (viewItem == sandbox.stopped || viewItem == sandbox.absent)",
           "group": "inline@4"
         },
         {
-          "command": "ainoflowSandbox.item.destroy",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.stopped",
+          "command": "sandboxConsole.item.destroy",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.stopped",
           "group": "inline@5"
         },
         {
-          "command": "ainoflowSandbox.item.remove",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.absent",
+          "command": "sandboxConsole.item.remove",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.absent",
           "group": "inline@6"
         },
         {
-          "command": "ainoflowSandbox.item.create",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.absent",
+          "command": "sandboxConsole.item.attach",
+          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\./",
           "group": "1_run@1"
         },
         {
-          "command": "ainoflowSandbox.item.attach",
-          "when": "view == ainoflowSandboxExplorer && (viewItem == sandbox.running || viewItem == sandbox.stopped)",
-          "group": "1_run@1"
-        },
-        {
-          "command": "ainoflowSandbox.item.shell",
-          "when": "view == ainoflowSandboxExplorer && (viewItem == sandbox.running || viewItem == sandbox.stopped)",
+          "command": "sandboxConsole.item.shell",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.running",
           "group": "1_run@2"
         },
         {
-          "command": "ainoflowSandbox.item.stop",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.running",
+          "command": "sandboxConsole.item.stop",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.running",
           "group": "1_run@3"
         },
         {
-          "command": "ainoflowSandbox.item.edit",
-          "when": "view == ainoflowSandboxExplorer && (viewItem == sandbox.stopped || viewItem == sandbox.absent)",
+          "command": "sandboxConsole.item.edit",
+          "when": "view == sandboxConsoleExplorer && (viewItem == sandbox.stopped || viewItem == sandbox.absent)",
           "group": "2_config@1"
         },
         {
-          "command": "ainoflowSandbox.item.rebuild",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.stopped",
+          "command": "sandboxConsole.item.rebuild",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.stopped",
           "group": "2_config@2"
         },
         {
-          "command": "ainoflowSandbox.item.destroy",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.stopped",
+          "command": "sandboxConsole.item.destroy",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.stopped",
           "group": "3_danger@1"
         },
         {
-          "command": "ainoflowSandbox.item.remove",
-          "when": "view == ainoflowSandboxExplorer && viewItem == sandbox.absent",
+          "command": "sandboxConsole.item.remove",
+          "when": "view == sandboxConsoleExplorer && viewItem == sandbox.absent",
           "group": "3_danger@2"
         }
       ]

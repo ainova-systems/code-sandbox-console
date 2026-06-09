@@ -17,18 +17,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     statusItem,
-    vscode.commands.registerCommand("ainoflowSandbox.createClaude", () =>
+    vscode.commands.registerCommand("sandboxConsole.createClaude", () =>
       createAndAttach()
     ),
-    vscode.commands.registerCommand("ainoflowSandbox.attach", () => attach()),
-    vscode.commands.registerCommand("ainoflowSandbox.stop", () => stop()),
-    vscode.commands.registerCommand("ainoflowSandbox.openShell", () => shell()),
-    vscode.commands.registerCommand("ainoflowSandbox.rebuild", () => rebuild()),
-    vscode.commands.registerCommand("ainoflowSandbox.newSandbox", async () => {
+    vscode.commands.registerCommand("sandboxConsole.attach", () => attach()),
+    vscode.commands.registerCommand("sandboxConsole.stop", () => stop()),
+    vscode.commands.registerCommand("sandboxConsole.openShell", () => shell()),
+    vscode.commands.registerCommand("sandboxConsole.rebuild", () => rebuild()),
+    vscode.commands.registerCommand("sandboxConsole.newSandbox", async () => {
       const root = sandbox.workspaceRoot();
       if (!root) {
         vscode.window.showErrorMessage(
-          "Ainoflow Sandbox: open a folder/repository first."
+          "Sandbox Console: open a folder/repository first."
         );
         return;
       }
@@ -58,7 +58,7 @@ export function deactivate(): void {
 function fail(action: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
   vscode.window.showErrorMessage(
-    `Ainoflow Sandbox: ${action} failed. ${msg} (If you are not signed in, run "sbx login".)`
+    `Sandbox Console: ${action} failed. ${msg} (If you are not signed in, run "sbx login".)`
   );
 }
 
@@ -67,13 +67,13 @@ async function preflight(): Promise<vscode.Uri | undefined> {
   const root = sandbox.workspaceRoot();
   if (!root) {
     vscode.window.showErrorMessage(
-      "Ainoflow Sandbox: open a folder/repository first."
+      "Sandbox Console: open a folder/repository first."
     );
     return undefined;
   }
   if (!(await sbx.available())) {
     vscode.window.showErrorMessage(
-      'Ainoflow Sandbox: Docker Sandboxes (sbx) was not found. Install it, then run "sbx login".'
+      'Sandbox Console: Docker Sandboxes (sbx) was not found. Install it, then run "sbx login".'
     );
     return undefined;
   }
@@ -217,39 +217,40 @@ async function refreshStatus(): Promise<void> {
     setStatus(
       "$(add) Claude Sandbox",
       "No sandbox for this project — click to create",
-      "ainoflowSandbox.createClaude"
+      "sandboxConsole.createClaude"
     );
     return;
   }
-  const ref = await sandbox.primaryRef(root, identity);
-  const label = `${agentLabel(ref.spec.agent)} Sandbox`;
+  let ref: sandbox.SandboxRef;
   let state: sbx.SandboxState;
   try {
+    ref = await sandbox.primaryRef(root, identity);
     state = await sandbox.state(ref);
   } catch {
-    statusItem.hide(); // e.g. not signed in
+    statusItem.hide(); // not signed in, or a malformed config — stay quiet
     return;
   }
+  const label = `${agentLabel(ref.spec.agent)} Sandbox`;
   switch (state) {
     case "running":
       setStatus(
         `$(circle-filled) ${label}`,
-        "Running — click to attach",
-        "ainoflowSandbox.attach"
+        "Running — click to connect",
+        "sandboxConsole.attach"
       );
       break;
     case "stopped":
       setStatus(
         `$(circle-outline) ${label}`,
-        "Stopped — click to start & attach",
-        "ainoflowSandbox.attach"
+        "Stopped — click to connect",
+        "sandboxConsole.attach"
       );
       break;
     case "absent":
       setStatus(
         `$(add) ${label}`,
         "Not created — click to create",
-        "ainoflowSandbox.createClaude"
+        "sandboxConsole.createClaude"
       );
       break;
   }
@@ -273,21 +274,22 @@ async function discoverAndOffer(): Promise<void> {
     return; // Stay quiet; commands explain when invoked.
   }
 
-  const ref = await sandbox.primaryRef(root, identity);
-  const label = agentLabel(ref.spec.agent);
+  let ref: sandbox.SandboxRef;
   let current: sbx.SandboxState;
   try {
+    ref = await sandbox.primaryRef(root, identity);
     current = await sandbox.state(ref);
   } catch {
-    return; // e.g. not signed in — don't nag on startup.
+    return; // not signed in, or a malformed config — don't nag on startup.
   }
+  const label = agentLabel(ref.spec.agent);
 
   if (current === "running") {
     if (
       (await vscode.window.showInformationMessage(
         `${label} Sandbox found · Running`,
-        "Attach"
-      )) === "Attach"
+        "Connect"
+      )) === "Connect"
     ) {
       await attach();
     }
@@ -295,8 +297,8 @@ async function discoverAndOffer(): Promise<void> {
     if (
       (await vscode.window.showInformationMessage(
         `${label} Sandbox found · Stopped`,
-        "Start and Attach"
-      )) === "Start and Attach"
+        "Connect"
+      )) === "Connect"
     ) {
       await attach();
     }
