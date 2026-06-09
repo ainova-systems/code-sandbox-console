@@ -3,6 +3,13 @@
 > **Status:** Draft, tracks the v0.1 walking skeleton.
 > **Companion docs:** [FRD.md](FRD.md) (requirements). Requirement IDs (`FR-0xx`)
 > below refer to that document.
+> **Upstream reference (authoritative for `sbx` behaviour — read before changing any
+> backend assumption):** Docker Sandboxes docs, <https://docs.docker.com/ai/sandboxes/>.
+> Customization specifics:
+> [build-an-agent](https://docs.docker.com/ai/sandboxes/customize/build-an-agent/),
+> [templates](https://docs.docker.com/ai/sandboxes/customize/templates/),
+> [kits](https://docs.docker.com/ai/sandboxes/customize/kits/),
+> [kit-examples](https://docs.docker.com/ai/sandboxes/customize/kit-examples/).
 
 ## 1. Purpose & scope
 
@@ -154,6 +161,14 @@ guarantee. The keychain secret is the only API-key path we will support.
 Credential priority: **OAuth `/login` (default) → keychain secret (next) → ✗ never
 env var.**
 
+**v0.2 plan (supersedes "provisions nothing"):** the extension provisions secrets *on
+request* via a form that runs `sbx secret set [-g | <sandbox>] <service>
+--password-stdin` — values flow through stdin (never in shell history) and are **never**
+baked into images or env. The recipe (§14) lists required secret **names** only; the form
+reads `sbx secret ls` and prompts solely for the missing ones. Scope is user-chosen:
+per-sandbox is a valid, deliberate choice (e.g. a repo-scoped GitHub token), global `-g`
+for shared creds. This satisfies FR-030 without weakening the credential-isolation model.
+
 ## 9. Security & isolation
 
 Provided by `sbx`, surfaced (not reimplemented) by the extension:
@@ -219,7 +234,7 @@ UIs (§12), and MCP endpoints (§13). The backend already supports several of th
 sandbox per (repo, agent), and direct mount binds the single working tree — so two
 agents on the same tree in parallel would race/corrupt. Two isolation paths enable it:
 *(a) git worktrees* — `git worktree add` a per-task dir on its own branch, mount each
-into its own sandbox; commits land on real branches instantly. Because `.sandbox` is
+into its own sandbox. Per the workflows docs the in-sandbox agent **cannot use git** in a worktree (its `.git` pointer resolves outside the mounted dir) — commit from the host, or use `--clone` for in-sandbox git. Because `.sandbox` is
 gitignored and per-working-tree, **each worktree already gets its own identity and thus
 its own sandbox for free** — "parallel" reduces to "open each worktree as a normal
 single-sandbox project", and the only new work is worktree create/cleanup. *(b)
@@ -240,3 +255,143 @@ both: N microVMs = N×RAM, and managing multiple instances needs the Explorer/pi
 | `Open Shell` lands in workspace | ✅ fixed — `exec -w /<drive>/…` (`hostToSandboxPath`) |
 | Credential model — global `anthropic` secret reused across sandboxes | ✅ verified live (`sbx secret ls`); new sandbox authenticated, no login |
 | Extension end-to-end via F5 | ✅ user-confirmed: Create Claude Sandbox → terminal → authenticated `claude`. (attach/stop/shell not yet each confirmed) |
+| Custom-image pipeline (build → save → `template load` → `create -t`) | ✅ verified live (spike): built `FROM docker/sandbox-templates:claude-code`, baked a marker, ran from the custom template — `agent` user + `claude` v2.1.79 + marker all present; FLAVOR auto-inherited |
+| v0.2 extension (config recipe, `.sandbox/` identity, image build, secret provisioning, Configure webview, Sandbox Explorer tree) | ✅ `tsc --noEmit` clean + esbuild bundles + `vsce` manifest validates; ⏳ runtime flows (webview, tree actions, live secret set / image build through the UI) pending F5 manual validation |
+
+## 14. Configuration recipe & identity (v0.2 design)
+
+Identity and configuration are split **by git treatment**, because they need opposite
+handling: the **recipe** is shared (committed, travels with the repo/copy); the
+**identity** is local (gitignored, per-working-tree). A single file cannot be
+half-committed, so state moves from the v0.1 single `.sandbox` file into a `.sandbox/`
+**folder** (mirrors `.devcontainer/`):
+
+```text
+.sandbox/
+  config.yaml      # committed   — the shared recipe (compose-like)
+  identity.yaml    # gitignored  — local label only
+  Dockerfile       # committed   — optional custom image, referenced by config
+```
+
+`.gitignore`: only `.sandbox/identity.yaml` is ignored; `config.yaml` and any `Dockerfile`
+are committed.
+
+**Identity (`identity.yaml`)** — just a human label:
+
+```yaml
+name: code-sandbox-console
+```
+
+The v0.1 `id` UUID is **dropped**: the sbx sandbox name derives from `name`
+(`<name>-<key>`), never from a UUID, so the UUID was dead weight (it wasn't in the name,
+so it never disambiguated anything). `name` is persisted once (folder-derived) so it
+survives a folder rename; separate repo copies in different folders get different names
+and therefore independent sandboxes (this is exactly why `tomis-next-v2/v3/v4` are
+separate — different folders → different `name` → different sandbox).
+
+**Recipe (`config.yaml`)** — compose-like, committed, shared:
+
+```yaml
+version: 1
+sandboxes:
+  claude:                     # logical key → sandbox name "<identity.name>-claude"
+    agent: claude             # required: sbx agent (claude/shell/codex/opencode/…)
+    image: myrepo-dev:latest  # optional: image tag to run with (-t)
+    dockerfile: Dockerfile    # optional: path under .sandbox/; if set → build `image` from it
+    mount: direct             # optional: direct | clone (FS policy; default direct)
+    secrets: [github]         # optional: service-secret NAMES to provision (values never here)
+    ports: [5000, 5173]       # optional: ports to publish
+  shell:
+    agent: shell
+    image: myrepo-dev:latest  # reuse the same built image for a sibling shell sandbox
+```
+
+Compose semantics (the model the user asked for): `image` is the tag; **if `dockerfile`
+is set, the extension builds and tags it as `image`**, else `image` is used as-is, else
+(neither) the agent's default image. `secrets` holds **names only** — values are
+provisioned via `sbx secret set` (§8), never committed. One repo copy can declare
+multiple sandboxes (e.g. `claude` + `shell`) that share the workspace and (optionally) the
+same custom image.
+
+## 15. Custom images: templates & kits (verified)
+
+`sbx` has **no native Dockerfile build**; custom environments come from two official,
+complementary mechanisms (see the `customize/` docs linked at the top of this file).
+
+**Templates — baked image (the `image` + `dockerfile` path).** Verified end-to-end on
+v0.31.3:
+
+```text
+docker build -t <image> -f .sandbox/Dockerfile <context>   # FROM an agent base image
+docker save <image> -o <tar>                               # host docker store ≠ sbx store
+sbx template load <tar>                                     # into the sbx runtime image store
+sbx create -t <image> <agent> <workspace>                  # custom rootfs, agent preserved
+```
+
+Confirmed by the spike: the built image keeps the `agent` user and the `claude` binary,
+inherits `FLAVOR=claude-code` automatically, and a marker baked at build time is present
+at runtime. **The sbx runtime image store is separate from host docker** — a host-built
+image is NOT visible to `-t` until `template load`ed (a direct `create -t` of an unloaded
+host image fails with "pull failed"). Templates persist in the store; only `sbx reset`
+clears them. **Base-image contract** (build-an-agent docs): non-root `agent` user at UID
+1000, passwordless sudo, `/home/agent/`, HTTP-proxy env forwarding — so a custom
+Dockerfile must `FROM docker/sandbox-templates:<flavor>` and wrap install steps in
+`USER root` … `USER agent`. **Rebuild** = re-run build → reload → recreate the sandbox
+(the host workspace is on the mount, so only image-baked tooling is refreshed, not work).
+**Never bake secrets** into a template — the docs warn `template save` captures
+manually-added secrets; use `sbx secret set`.
+
+**Kits — declarative extension (the follow-up `setup` path).** A `spec.yaml`
+(`kind: mixin` to extend claude, or `kind: agent` to define one) supplies env vars,
+credential→source maps, network rules, static files, agent memory, and commands. Command
+lifecycle (this settles "does it reinstall each start?"):
+
+- `commands.install` — **runs once at creation; installed packages persist** across
+  stop/start. ← use this to add tools (e.g. dotnet) *without* maintaining an image.
+- `commands.startup` — runs on **every** start; must be idempotent (daemons/services).
+- `commands.initFiles` — written each start, with `${WORKDIR}` substitution.
+
+`--kit` applies only at create; `sbx kit add <sandbox> <ref>` injects into a running
+sandbox (re-runs `install`, re-copies files) — the basis for "edit sandbox / append
+secrets live". **v0.2 ships the template path first** (it matches the user's
+`image`+`dockerfile` model and is verified); kits are the declarative follow-up.
+
+**Instance-first New/Edit (the user edits a sandbox, not a file).** The Explorer drives a
+webview: **New Sandbox** (`ainoflowSandbox.newSandbox`, the `+` in the view title) creates
+one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display name;
+for New it also derives the sandbox key/name), **Agent**, **Group** (organises the tree
+into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
+**Advanced** (Environment: Default / Custom Dockerfile / Custom image; published ports as
+add/remove rows; `direct | clone` mount). Agent/secret lists come from the installed sbx
+(static fallback), so the form tracks the local version.
+
+**Save = persist + apply (this removes the config-vs-instance confusion).** The definition
+is written to `.sandbox/config.yaml` (invisible plumbing, still committable) AND applied to
+the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply **live**;
+image/mount changes prompt a **Rebuild** (recreate; workspace on the mount preserved). A
+just-generated Dockerfile is **not** auto-built (it carries only the default shell base) —
+the user edits it, then Rebuild/Attach builds it. A custom Dockerfile is linted for a
+`FROM`. Per-sandbox image + Title/Group let one repo run several differently-configured,
+organised sandboxes.
+
+## 16. Rebuild semantics (supersedes the single FR-007 "Rebuild")
+
+The v0.1 FRD overloaded "Rebuild" to mean "destroy state". v0.2 splits it into three
+distinct, separately-surfaced operations:
+
+| Operation | What it does | State |
+|---|---|---|
+| **Recreate** | `sbx rm --force` + recreate from the recipe | destroys sandbox state (host workspace untouched) |
+| **Rebuild image** | re-run `docker build` → `template load` → recreate from the new image | refreshes image-baked tooling; workspace is on the mount, so work is safe |
+| **Edit** | add/rotate secrets (`secret set <sandbox>`) or inject a kit (`kit add`) into a **running** sandbox | non-destructive, no recreate |
+
+`mount` (§14) selects the FS workflow (see §9): `direct` (instant edits, in-sandbox git,
+no parallelism) vs `clone` (private clone, retrieve via `git fetch sandbox-<name>`,
+parallel-agent friendly, set only at create).
+
+**Rebuild image is one action ("easy way").** A single command/button runs the whole
+pipeline — `docker build` → `docker save` → `sbx template load` → `sbx rm --force` →
+recreate from the new image → re-attach — behind a progress indicator, so the user never
+runs it by hand. The host workspace is on the mount, so in-progress work survives the
+recreate; only image-baked tooling is refreshed. (When the recipe has no custom image,
+"Rebuild" degrades to a plain Recreate.)

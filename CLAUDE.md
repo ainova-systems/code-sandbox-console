@@ -10,6 +10,9 @@ orchestration layer over the `sbx` CLI — it does **not** manage containers its
 
 - Requirements: `docs/FRD.md` (referenced by `FR-0xx` IDs throughout the code).
 - Design & decisions: `docs/ARCHITECTURE.md` — read it before changing backend behaviour.
+- Upstream `sbx` behaviour (**authoritative**): Docker Sandboxes docs —
+  <https://docs.docker.com/ai/sandboxes/>. ARCHITECTURE.md lists the specific
+  `customize/` pages (templates & kits). Verify against these before changing any CLI assumption.
 
 ## Build & check
 
@@ -46,23 +49,32 @@ probing. "Build is green" = `tsc --noEmit` clean AND `npm run build` succeeds.
 Fixed priority: **OAuth `/login` (default fallback) → API key in the OS keychain via
 `sbx secret set -g anthropic` (next) → never a plaintext `ANTHROPIC_API_KEY` env var.**
 The host's existing `~/.claude` login is **not** reused (deliberate microVM isolation).
-The extension provisions nothing in v0.1.
+v0.1 provisions nothing; v0.2 provisions secrets *on request* via a form driving
+`sbx secret set … --password-stdin` (FR-032; never baked into images/env) — see
+ARCHITECTURE §8.
 
 ## Module map
 
-`src/extension.ts` (commands + startup discovery UX), `identity.ts` (`.sandbox`
-`{id,name}`), `sbx.ts` (CLI wrapper + path resolution + `hostToSandboxPath`),
-`sandbox.ts` (naming + lifecycle over sbx), `terminal.ts` (native terminals driving
-sbx), `agents.ts` (registry). Dependency direction: `extension → {sandbox, terminal,
-identity, agents}`; `sandbox → sbx`.
+`src/extension.ts` (commands + startup discovery UX), `config.ts` (`.sandbox/config.yaml`
+recipe parse/write — FR-009), `identity.ts` (`.sandbox/identity.yaml` `{name}`), `sbx.ts`
+(CLI wrapper: lifecycle + `template load`/`secret set`/discovery + `hostToSandboxPath`),
+`images.ts` (custom-image build → save → `template load`, FR-008), `secrets.ts` (provision
+missing secrets, FR-032), `sandbox.ts` (recipe→refs + naming + lifecycle), `ops.ts`
+(per-sandbox create/attach/rebuild/shell shared by palette + Explorer), `terminal.ts`
+(native terminals driving sbx), `form.ts` (webview Configure form), `tree.ts` (Sandbox
+Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
+Dependency direction: `extension → {ops, form, tree, sandbox, identity, agents, sbx}`;
+`ops → {images, secrets, sandbox, terminal, sbx}`; `tree → {ops, form, sandbox, sbx}`;
+`sandbox → {config, sbx}`; nothing depends on `extension`.
 
 ## Binding UX invariants (not preferences)
 
 When a sandbox exists, **Attach is the primary action and resume is the default** —
 never steer toward a duplicate (FRD §3/§4). Terminal-first: every agent interaction is
-a terminal window; no chat panels or custom agent UI. `.sandbox` (gitignored,
-per-working-tree) keys identity on a stable local id — a fresh clone or git worktree
-gets its own.
+a terminal window; no chat panels or custom agent UI. `.sandbox/identity.yaml` (gitignored,
+per-working-tree) holds the local label (`name`) the sandbox name derives from — a fresh
+clone, copy, or git worktree gets its own. The committed `.sandbox/config.yaml` recipe
+(FR-009) is shared. See ARCHITECTURE §14.
 
 ## Conventions
 

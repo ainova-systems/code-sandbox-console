@@ -31,6 +31,9 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Sandbox identity / local state — per-developer & per-working-tree, never committed
-.sandbox
+# Sandbox local identity — per-developer & per-working-tree, never committed.
+# The committed recipe (.sandbox/config.yaml) and any Dockerfile are NOT ignored.
+.sandbox/identity.yaml
+.sandbox/*.local
+# v0.1 single-file layout (migrated to .sandbox/ on read)
 .sandbox.local

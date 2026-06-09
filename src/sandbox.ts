@@ -1,27 +1,61 @@
 import * as vscode from "vscode";
-import { AgentDef } from "./agents";
+import { DEFAULT_AGENT } from "./agents";
+import { readConfig, SandboxSpec } from "./config";
 import { SandboxIdentity } from "./identity";
 import * as sbx from "./sbx";
 
 /**
- * sbx sandbox name = repo identity + agent (FR-001). Derived from the persisted
- * `.sandbox` name (a folder-derived slug, stable across renames once written),
- * so the same repo always maps to the same sandbox. sbx names allow letters,
- * numbers, hyphens, periods, plus and minus signs.
+ * A concrete sandbox for this repo: a recipe spec (FR-009) bound to the local identity,
+ * with the derived sbx name. The name is `<identity.name>-<spec.key>` — keyed on the
+ * local label (never a UUID), so separate copies/worktrees get independent sandboxes.
+ * sbx names allow letters, numbers, hyphens, periods, plus and minus signs.
  */
-export function sandboxName(identity: SandboxIdentity, agent: AgentDef): string {
-  const base = identity.name.replace(/[^A-Za-z0-9.+-]/g, "-");
-  return `${base}-${agent.id}`;
-}
-
 export interface SandboxRef {
   identity: SandboxIdentity;
-  agent: AgentDef;
+  spec: SandboxSpec;
   name: string;
 }
 
-export function ref(identity: SandboxIdentity, agent: AgentDef): SandboxRef {
-  return { identity, agent, name: sandboxName(identity, agent) };
+function sanitize(part: string): string {
+  return part.replace(/[^A-Za-z0-9.+-]/g, "-");
+}
+
+export function sandboxName(identity: SandboxIdentity, key: string): string {
+  return `${sanitize(identity.name)}-${sanitize(key)}`;
+}
+
+export function ref(identity: SandboxIdentity, spec: SandboxSpec): SandboxRef {
+  return { identity, spec, name: sandboxName(identity, spec.key) };
+}
+
+/** The implicit recipe when `.sandbox/config.yaml` is absent: a single Claude sandbox. */
+export function defaultSpec(): SandboxSpec {
+  return {
+    key: DEFAULT_AGENT.id,
+    agent: DEFAULT_AGENT.id,
+    mount: "direct",
+    secrets: [],
+    ports: [],
+  };
+}
+
+/** Every sandbox declared for this repo (the recipe, or the default single Claude). */
+export async function refs(
+  root: vscode.Uri,
+  identity: SandboxIdentity
+): Promise<SandboxRef[]> {
+  const config = await readConfig(root);
+  const specs = config?.sandboxes ?? [defaultSpec()];
+  return specs.map((spec) => ref(identity, spec));
+}
+
+/** The primary sandbox for the single-action commands (first recipe entry / default). */
+export async function primaryRef(
+  root: vscode.Uri,
+  identity: SandboxIdentity
+): Promise<SandboxRef> {
+  const all = await refs(root, identity);
+  return all[0] ?? ref(identity, defaultSpec());
 }
 
 export function state(sandbox: SandboxRef): Promise<sbx.SandboxState> {
@@ -42,8 +76,10 @@ export function destroy(sandbox: SandboxRef): Promise<void> {
 export function create(sandbox: SandboxRef, workspace: string): Promise<void> {
   return sbx.create({
     name: sandbox.name,
-    agent: sandbox.agent.id,
+    agent: sandbox.spec.agent,
     workspace,
+    clone: sandbox.spec.mount === "clone",
+    image: sandbox.spec.image,
   });
 }
 

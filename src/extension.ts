@@ -1,9 +1,11 @@
 import * as vscode from "vscode";
-import { DEFAULT_AGENT } from "./agents";
+import { agentLabel } from "./agents";
 import { ensureIdentity, readIdentity } from "./identity";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
-import { openAgentAttach, openAgentCreate, openShell } from "./terminal";
+import { openForm } from "./form";
+import * as ops from "./ops";
+import { registerExplorer } from "./tree";
 
 let statusItem: vscode.StatusBarItem;
 
@@ -21,6 +23,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("ainoflowSandbox.attach", () => attach()),
     vscode.commands.registerCommand("ainoflowSandbox.stop", () => stop()),
     vscode.commands.registerCommand("ainoflowSandbox.openShell", () => shell()),
+    vscode.commands.registerCommand("ainoflowSandbox.rebuild", () => rebuild()),
+    vscode.commands.registerCommand("ainoflowSandbox.newSandbox", async () => {
+      const root = sandbox.workspaceRoot();
+      if (!root) {
+        vscode.window.showErrorMessage(
+          "Ainoflow Sandbox: open a folder/repository first."
+        );
+        return;
+      }
+      await openForm(context, root, { kind: "new" });
+    }),
     // Keep the indicator live without polling: refresh when the window regains
     // focus (state may have changed via the CLI) and when terminals come/go.
     vscode.window.onDidChangeWindowState((s) => {
@@ -32,6 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidCloseTerminal(() => void refreshStatus())
   );
 
+  registerExplorer(context);
   void refreshStatus();
   // FR-002: discover on workspace open and offer the resume-first action.
   void discoverAndOffer();
@@ -66,7 +80,7 @@ async function preflight(): Promise<vscode.Uri | undefined> {
   return root;
 }
 
-/** FR-003: create the Claude sandbox and attach (create-or-attach via sbx run). */
+/** FR-003: create the primary sandbox and attach (resume-first; image+secrets via ops). */
 async function createAndAttach(): Promise<void> {
   const root = await preflight();
   if (!root) {
@@ -74,16 +88,44 @@ async function createAndAttach(): Promise<void> {
   }
   try {
     const identity = await ensureIdentity(root);
-    const ref = sandbox.ref(identity, DEFAULT_AGENT);
-    const workspace = sandbox.workspacePath()!;
-    if ((await sandbox.state(ref)) === "absent") {
-      openAgentCreate(ref, workspace);
-    } else {
-      openAgentAttach(ref);
-    }
+    const ref = await sandbox.primaryRef(root, identity);
+    await ops.createOrAttach(root, ref);
     refreshSoon();
   } catch (err) {
     fail("create", err);
+  }
+}
+
+/** FR-007 Rebuild: rebuild the custom image (if any) and recreate the primary sandbox. */
+async function rebuild(): Promise<void> {
+  const root = await preflight();
+  if (!root) {
+    return;
+  }
+  try {
+    const identity = await readIdentity(root);
+    if (!identity) {
+      vscode.window.showInformationMessage("No sandbox to rebuild.");
+      return;
+    }
+    const ref = await sandbox.primaryRef(root, identity);
+    const hasImage = Boolean(ref.spec.image && ref.spec.dockerfile);
+    const choice = await vscode.window.showWarningMessage(
+      `Rebuild ${ref.name}? ${
+        hasImage
+          ? "Rebuilds the image and recreates the sandbox."
+          : "Recreates the sandbox."
+      } The workspace on the host mount is preserved.`,
+      { modal: true },
+      "Rebuild"
+    );
+    if (choice !== "Rebuild") {
+      return;
+    }
+    await ops.rebuildRef(root, ref);
+    refreshSoon();
+  } catch (err) {
+    fail("rebuild", err);
   }
 }
 
@@ -98,11 +140,8 @@ async function attach(): Promise<void> {
     if (!identity) {
       return void createAndAttach();
     }
-    const ref = sandbox.ref(identity, DEFAULT_AGENT);
-    if ((await sandbox.state(ref)) === "absent") {
-      return void createAndAttach();
-    }
-    openAgentAttach(ref);
+    const ref = await sandbox.primaryRef(root, identity);
+    await ops.createOrAttach(root, ref);
     refreshSoon();
   } catch (err) {
     fail("attach", err);
@@ -121,14 +160,14 @@ async function stop(): Promise<void> {
       vscode.window.showInformationMessage("No sandbox to stop.");
       return;
     }
-    const ref = sandbox.ref(identity, DEFAULT_AGENT);
+    const ref = await sandbox.primaryRef(root, identity);
     if ((await sandbox.state(ref)) !== "running") {
       vscode.window.showInformationMessage("Sandbox is not running.");
       return;
     }
-    await sandbox.stop(ref);
+    await ops.stopRef(ref);
     vscode.window.showInformationMessage(
-      `${DEFAULT_AGENT.label} sandbox stopped. State is preserved.`
+      `${agentLabel(ref.spec.agent)} sandbox stopped. State is preserved.`
     );
     void refreshStatus();
   } catch (err) {
@@ -144,12 +183,8 @@ async function shell(): Promise<void> {
   }
   try {
     const identity = await ensureIdentity(root);
-    const ref = sandbox.ref(identity, DEFAULT_AGENT);
-    const host = sandbox.workspacePath()!;
-    if ((await sandbox.state(ref)) === "absent") {
-      await sandbox.create(ref, host);
-    }
-    openShell(ref, sbx.hostToSandboxPath(host));
+    const ref = await sandbox.primaryRef(root, identity);
+    await ops.shellRef(root, ref);
     refreshSoon();
   } catch (err) {
     fail("open shell", err);
@@ -186,9 +221,11 @@ async function refreshStatus(): Promise<void> {
     );
     return;
   }
+  const ref = await sandbox.primaryRef(root, identity);
+  const label = `${agentLabel(ref.spec.agent)} Sandbox`;
   let state: sbx.SandboxState;
   try {
-    state = await sandbox.state(sandbox.ref(identity, DEFAULT_AGENT));
+    state = await sandbox.state(ref);
   } catch {
     statusItem.hide(); // e.g. not signed in
     return;
@@ -196,21 +233,21 @@ async function refreshStatus(): Promise<void> {
   switch (state) {
     case "running":
       setStatus(
-        "$(circle-filled) Claude Sandbox",
+        `$(circle-filled) ${label}`,
         "Running — click to attach",
         "ainoflowSandbox.attach"
       );
       break;
     case "stopped":
       setStatus(
-        "$(circle-outline) Claude Sandbox",
+        `$(circle-outline) ${label}`,
         "Stopped — click to start & attach",
         "ainoflowSandbox.attach"
       );
       break;
     case "absent":
       setStatus(
-        "$(add) Claude Sandbox",
+        `$(add) ${label}`,
         "Not created — click to create",
         "ainoflowSandbox.createClaude"
       );
@@ -236,9 +273,11 @@ async function discoverAndOffer(): Promise<void> {
     return; // Stay quiet; commands explain when invoked.
   }
 
+  const ref = await sandbox.primaryRef(root, identity);
+  const label = agentLabel(ref.spec.agent);
   let current: sbx.SandboxState;
   try {
-    current = await sandbox.state(sandbox.ref(identity, DEFAULT_AGENT));
+    current = await sandbox.state(ref);
   } catch {
     return; // e.g. not signed in — don't nag on startup.
   }
@@ -246,7 +285,7 @@ async function discoverAndOffer(): Promise<void> {
   if (current === "running") {
     if (
       (await vscode.window.showInformationMessage(
-        `${DEFAULT_AGENT.label} Sandbox found · Running`,
+        `${label} Sandbox found · Running`,
         "Attach"
       )) === "Attach"
     ) {
@@ -255,7 +294,7 @@ async function discoverAndOffer(): Promise<void> {
   } else if (current === "stopped") {
     if (
       (await vscode.window.showInformationMessage(
-        `${DEFAULT_AGENT.label} Sandbox found · Stopped`,
+        `${label} Sandbox found · Stopped`,
         "Start and Attach"
       )) === "Start and Attach"
     ) {

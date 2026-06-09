@@ -185,6 +185,12 @@ Rules:
   gets its own `.sandbox`, so it can map to its own sandbox (enables parallel sandboxes
   per worktree).
 
+> **v0.2 revision (see ARCHITECTURE §14):** `.sandbox` becomes a **folder**. The local
+> identity is `.sandbox/identity.yaml` holding only `{ name }` (the `id` UUID is dropped —
+> the sandbox name derives from `name`, not the UUID). The shared, **committed** recipe is
+> `.sandbox/config.yaml` (FR-009). Only `.sandbox/identity.yaml` is gitignored;
+> `config.yaml` and any `Dockerfile` are committed. Format is YAML, not JSON.
+
 ---
 
 ## FR-002 Sandbox Discovery
@@ -266,19 +272,51 @@ Stopping must preserve:
 
 ---
 
-## FR-007 Sandbox Rebuild
+## FR-007 Sandbox Rebuild / Recreate / Edit
 
-Users shall be able to rebuild a sandbox.
+The single v0.1 "Rebuild" is split into three distinct operations (see ARCHITECTURE §16):
 
-Example:
+* **Recreate** — `rm --force` + recreate from the recipe. **Destroys** sandbox state
+  (host workspace untouched). Confirmation required.
+* **Rebuild image** — re-build the custom image (FR-008) and recreate the sandbox from
+  it. Refreshes image-baked tooling; work on the mounted workspace is preserved.
+* **Edit** — add/rotate secrets or inject a kit into a **running** sandbox
+  (non-destructive, no recreate).
 
-```text
-Rebuild Sandbox
+## FR-008 Custom Environment (preinstalled tooling)
+
+A sandbox shall optionally run on a **custom image** so dev tooling (e.g. .NET SDK) is
+preinstalled, instead of the agent's default image.
+
+* The image is referenced by the recipe (FR-009): `image:` is the tag; if `dockerfile:`
+  is set, the extension builds that Dockerfile and tags it as `image:`
+  (docker-compose semantics).
+* Custom Dockerfiles must extend an agent base
+  (`FROM docker/sandbox-templates:<flavor>`) so the agent binary, `agent` user, and proxy
+  env survive (ARCHITECTURE §15). Build steps that need root use `USER root` … `USER agent`.
+* Build pipeline (verified): `docker build` → `docker save` → `sbx template load` →
+  `sbx run/create -t <image>`. **Rebuild image** re-runs this pipeline.
+* Secrets shall **never** be baked into images — they are provisioned via FR-032.
+
+## FR-009 Configuration Recipe
+
+Per-repo sandbox configuration shall live in a committed, compose-like **`.sandbox/config.yaml`**
+recipe (YAML), shared across clones/copies via git:
+
+```yaml
+version: 1
+sandboxes:
+  claude:                     # logical key → sandbox "<name>-claude"
+    agent: claude             # sbx agent
+    image: myrepo-dev:latest  # optional custom image
+    dockerfile: Dockerfile    # optional; if set → build `image` from .sandbox/Dockerfile
+    mount: direct             # optional: direct | clone
+    secrets: [github]         # secret NAMES only (values via FR-032)
+    ports: [5000, 5173]       # optional published ports
 ```
 
-Rebuild destroys existing state.
-
-Confirmation is required.
+The recipe declares one or more sandboxes per repo (multi-agent, e.g. `claude` + `shell`).
+Identity (the local label) is kept separately and gitignored (FR-001).
 
 ---
 
@@ -406,6 +444,23 @@ Examples:
 * cargo cache
 * Claude configuration
 * Codex configuration
+
+---
+
+## FR-032 Secret Provisioning (UX)
+
+The extension shall provision service secrets from the UI, so users never run `sbx secret`
+by hand (see ARCHITECTURE §8).
+
+* The recipe (FR-009) lists required secret **names** (e.g. `github`); the extension reads
+  `sbx secret ls` and prompts only for the ones not already satisfied.
+* Values are entered in a password input and piped via
+  `sbx secret set [-g | <sandbox>] <service> --password-stdin` — never shown in shell
+  history, never written to the repo, never baked into images.
+* Scope is user-chosen: **per-sandbox** (deliberate for repo-scoped tokens) or global `-g`
+  (shared creds like the Anthropic key).
+* `anthropic` remains satisfied by the host-global OAuth/keychain credential by default
+  (no per-sandbox login).
 
 ---
 
