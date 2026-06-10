@@ -232,7 +232,10 @@ async function apply(
           `"${dockerfile}" cannot name a Dockerfile under .sandbox/ — use only letters, digits and "._-", starting with a letter or digit (no path separators).`
         );
       }
-      image = `${tagSafe(projectName)}-${tagSafe(key)}:latest`;
+      // The image is a product of the Dockerfile, so tag it `<project>:<file stem>` —
+      // sandboxes sharing one Dockerfile share one image (Rebuild refreshes it for all).
+      const stem = dockerfile.replace(/\.?dockerfile$/i, "") || key;
+      image = `${tagSafe(projectName)}:${tagSafe(stem)}`;
       // Existing file (e.g. shared by another sandbox) is reused as-is — only a
       // missing one is seeded, FROM the agent's own base template.
       const madeUri = await ensureDockerfile(root, dockerfile, agent);

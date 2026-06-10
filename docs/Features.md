@@ -273,7 +273,7 @@ preinstalled, instead of the agent's default image.
   `.sandbox/` (empty → `<key>.Dockerfile`). A missing file is generated `FROM` the
   **selected agent's base template** (the `-docker` flavor the CLI boots by default);
   an existing file is reused as-is — several sandboxes can share one committed
-  Dockerfile.
+  Dockerfile and the image built from it (derived tag `<project>:<dockerfile stem>`).
 * Custom Dockerfiles must extend an agent base
   (`FROM docker/sandbox-templates:<flavor>`) so the agent binary, `agent` user, and proxy
   env survive (Architecture §7). Build steps that need root use `USER root` … `USER agent`.

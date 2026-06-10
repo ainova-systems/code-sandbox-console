@@ -217,10 +217,13 @@ add/remove rows; `direct | clone` mount). The Dockerfile choice takes an optiona
 name** under `.sandbox/` (empty → `<key>.Dockerfile`): a missing file is generated `FROM`
 the selected agent's base template (`agentTemplate()` — the `-docker` flavor the CLI
 boots by default; claude → `claude-code-docker`); an existing file is reused untouched,
-so several sandboxes can share one committed Dockerfile (each still builds/tags its own
-`image`). The name is held to the same no-separators/no-leading-dot rule as recipe keys
-(§9) — it must never steer the write target outside `.sandbox/`. Agent/secret lists come
-from the installed sbx (static fallback), so the form tracks the local version.
+so several sandboxes can share one committed Dockerfile. The derived tag is
+`<project>:<dockerfile stem>` (e.g. `claude.Dockerfile` → `tomis-next:claude`) — the
+image is a product of the Dockerfile, so sharing the file shares the image and a
+Rebuild refreshes it for every sandbox using it. The name is held to the same
+no-separators/no-leading-dot rule as recipe keys (§9) — it must never steer the write
+target outside `.sandbox/`. Agent/secret lists come from the installed sbx (static
+fallback), so the form tracks the local version.
 
 **Save = persist + apply.** The definition is written to `.sandbox/config.yaml` AND
 applied to the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply

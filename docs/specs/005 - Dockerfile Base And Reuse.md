@@ -28,7 +28,7 @@ Local `.vsix` testing surfaced two FR-008 gaps:
 - **Dockerfile name field.** The *Custom: Dockerfile* choice in the New/Edit form gained
   a file-name input (under `.sandbox/`; empty → `<key>.Dockerfile`). A missing file is
   seeded; an existing one is **reused untouched**, so several sandboxes can share one
-  committed Dockerfile while each keeps its own `image` tag.
+  committed Dockerfile — and, via the derived tag, the image built from it.
 - The typed name is validated like recipe keys (no path separators, no leading dot) —
   an untrusted value must never steer the write target outside `.sandbox/`.
 
@@ -40,6 +40,8 @@ Local `.vsix` testing surfaced two FR-008 gaps:
 - An unchanged dockerfile name on an edit round-trip is accepted as-is (including
   hand-authored subfolder paths in `config.yaml`) — validation applies only to new or
   changed names, so existing recipes keep working.
-- Sharing a Dockerfile shares the *definition*, not the image: each sandbox still
-  builds and tags `<project>-<key>:latest` (docker layer cache makes the second build
-  free), keeping per-sandbox Rebuild independent.
+- Derived image tags are `<project>:<dockerfile stem>` (e.g. `claude.Dockerfile` →
+  `myproj:claude`), not `<project>-<key>:latest`: the image is a product of the
+  Dockerfile, so sandboxes sharing the file share the image and one Rebuild refreshes
+  the environment for all of them. Hand-set `image:` values in the recipe survive edit
+  round-trips untouched.
