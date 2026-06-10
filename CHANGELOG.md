@@ -28,6 +28,15 @@ From proof of concept to a managed Sandbox UI, plus the rebrand to **Sandbox Con
 - Credential provisioning on request via `sbx secret set` with the value piped
   over stdin (FR-032) — never in the repo, image, or a plaintext env var; for
   `github` it also runs `gh auth login --with-token` inside the sandbox.
+- Per-project secret cache (FR-051): enter a repo-scoped token once and pick it
+  from a list for every later sandbox/runner — values are DPAPI-encrypted blobs
+  in `~/.sbx` (this machine/user only, names shown, values never), with a
+  `Manage Cached Secrets` command to rename/delete entries.
+- Generated project CLI (FR-052): a committed `.sandbox/scripts/sbx.sh` exposing
+  the sandbox model to shells and AI skills — lifecycle, rebuild pipeline,
+  headless `task` dispatch, ephemeral clone-mode runners with guarded removal,
+  and the cached `secret-github` chain. Regenerated only on extension upgrades;
+  manual edits are never overwritten silently, and the extension never executes it.
 - Multi-agent, multi-sandbox support per repo (Claude Code, Codex, Gemini,
   OpenCode, plain shell) with a service registry for credentials.
 - Status bar shows the active sandbox by its display name; clicking it (or

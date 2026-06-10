@@ -39,5 +39,8 @@ CI enforces both on pushes and pull requests targeting `main`.
   never drift from shipped code. Specs are immutable once merged.
 - Keep `sbx` CLI strings in `src/sbx.ts` (all child-process invocations) and
   `src/terminal.ts` (the interactive `sbx run`/`exec` shellArgs) — those two
-  modules only.
+  modules only. One deliberate carve-out: the bash template in `src/script.ts`
+  *renders* sbx calls into the generated `.sandbox/scripts/sbx.sh` (FR-052) for
+  external shells — the extension itself never executes them; keep that template
+  mirroring `sbx.ts`/`ops.ts` when CLI shapes change.
 - Keep changes minimal and focused; match the existing code style.

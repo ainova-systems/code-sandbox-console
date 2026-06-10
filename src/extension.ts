@@ -6,6 +6,8 @@ import { ensureIdentity, readIdentity } from "./identity";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
+import { ensureProjectScript } from "./script";
+import { manageCachedSecrets } from "./secrets";
 import { registerExplorer } from "./tree";
 
 let statusItem: vscode.StatusBarItem;
@@ -32,6 +34,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("sandboxConsole.pickSandbox", () =>
       pickSandbox()
     ),
+    vscode.commands.registerCommand("sandboxConsole.manageSecrets", () =>
+      manageCachedSecrets().catch((err) => fail("manage cached secrets", err))
+    ),
     vscode.commands.registerCommand("sandboxConsole.newSandbox", async () => {
       // Same preflight as every other command: without it a missing sbx CLI only
       // surfaces as a raw "sbx ls failed" after the form has written `.sandbox/`.
@@ -57,6 +62,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // Explorer. Opening a workspace never raises notifications; Connect lives one
   // click away in the status bar.
   void refreshStatus();
+  // FR-052: keep the generated project CLI current for repos that use sandboxes.
+  void refreshProjectScript();
 }
 
 export function deactivate(): void {
@@ -73,6 +80,29 @@ function fail(action: string, err: unknown): void {
   vscode.window.showErrorMessage(
     `Sandbox Console: ${action} failed. ${msg}${hint}`
   );
+}
+
+/**
+ * FR-052: write/refresh `.sandbox/scripts/sbx.sh` on activation — only for repos that
+ * already opted into sandboxes (a recipe with entries exists). Generation is one-way:
+ * the extension writes the script but never executes it.
+ */
+async function refreshProjectScript(): Promise<void> {
+  const root = sandbox.workspaceRoot();
+  if (!root) {
+    return;
+  }
+  try {
+    const config = await readConfig(root);
+    if (!config || config.sandboxes.length === 0) {
+      return;
+    }
+    const version =
+      (extCtx.extension.packageJSON as { version?: string }).version ?? "0.0.0";
+    await ensureProjectScript(root, version);
+  } catch {
+    // malformed config / unwritable repo — the script is a convenience, stay quiet
+  }
 }
 
 /** Require an open workspace and a working sbx CLI. */

@@ -71,7 +71,9 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
 | `images.ts` | Custom-image pipeline: `docker build` → `docker save` → `sbx template load` (FR-008, §7), with dockerfile/context paths contained inside the repo (§9). |
-| `secrets.ts` | Provisions missing service secrets — prompt → `sbx secret set` over stdin (FR-032, §8). |
+| `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
+| `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
+| `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
 | `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. |
 | `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. |
 | `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. |
@@ -79,17 +81,21 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. |
 
 Dependency direction (verified against imports):
-`extension → {ops, form, tree, sandbox, config, identity, agents, sbx}`;
+`extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx}`;
 `tree → {ops, form, sandbox, config, identity, agents, sbx}`;
-`form → {ops, secrets, sandbox, config, identity, agents, sbx}`;
+`form → {ops, secrets, sandbox, config, identity, agents, script, sbx}`;
 `ops → {images, secrets, sandbox, terminal, sbx}`;
-`terminal → {sandbox, agents, sbx}`; `secrets → {sandbox, services, sbx}`;
-`sandbox → {config, identity, sbx}`; `images → {config, sbx}`; `identity → config`.
-Nothing depends on `extension`; `config`, `agents`, and `services` are leaves.
+`terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
+`sandbox → {config, identity, sbx}`; `images → {config, sbx}`; `script → config`;
+`identity → config`.
+Nothing depends on `extension`; `config`, `agents`, `services`, and `blobs` are leaves.
 
 `sbx.ts` shapes all child-process `sbx` invocations; `terminal.ts` additionally builds
 the interactive `run`/`exec` argument vectors used as terminal `shellArgs` — CLI strings
-live in those two modules only.
+the **extension executes** live in those two modules only. The one carve-out is the
+bash template in `script.ts`, which *renders* sbx calls into the generated
+`.sandbox/scripts/sbx.sh` (§13) for external shells — never executed by the extension;
+it must be kept in sync with `sbx.ts`/`ops.ts` when CLI shapes change.
 
 ## 5. Lifecycle & command mapping
 
@@ -264,6 +270,19 @@ prompt is recoverable). Values are piped over the child process's stdin to
 option, not part of the service-secret form.) Scope is user-chosen: per-sandbox is a
 valid, deliberate choice (e.g. a repo-scoped GitHub token), global `-g` for shared creds.
 
+**Per-project secret cache (FR-051).** Between sbx's two scopes — global (`-g`, every
+project on the machine) and per-instance (re-entered for every new sandbox/runner) —
+sits the extension's own cache: `~/.sbx/<entry>.<service>.dpapi` blobs (`blobs.ts`),
+encrypted with Windows DPAPI for the current OS user (other platforms degrade to
+no-cache). It is deliberately **not** VS Code `SecretStorage`: the same files are read
+by the generated project CLI (§13), so the UI and shell automation share one store.
+Selection is always explicit — provisioning offers a picker over cached entry **names**
+(current project's entry first, values never displayed) plus *Enter new value…*; a
+manually entered value can be cached under the project's name, another name, or used
+once. `Sandbox: Manage Cached Secrets` lists/renames/deletes entries. Values move only
+through process stdin/stdout pipes (extension ↔ PowerShell ↔ sbx) — never argv, env
+vars, or the repo; the sbx-side handling is unchanged FR-032.
+
 **Two credential layers for `github`.** Provisioning `github` does two things:
 (1) `sbx secret set` stores it host-side so the proxy authenticates the wire (git HTTPS /
 API) without the token entering the sandbox; (2) a best-effort
@@ -380,7 +399,41 @@ Clicking the item (or `Sandbox: Switch Sandbox`) connects directly when one sand
 defined, opens a Quick Pick (all recipe sandboxes + "New Sandbox…") when several are,
 and routes to the New Sandbox form when none is; picking updates the last-picked key.
 
-## 13. Known limitations & open questions
+## 13. Generated project CLI
+
+`.sandbox/scripts/sbx.sh` (FR-052) exports the extension's model — naming, identity
+bootstrap, lifecycle, the §7 rebuild pipeline, clone-mode runners, the §8 secret chain —
+as a **committed bash script** for shells and AI skills, so CLI automation stops
+re-encoding these rules as prose and calls subcommands instead
+(`name`/`status`/`connect`/`stop`/`rm`/`rebuild`/`exec`/`task`/`runner-create`/
+`runner-rm`/`runners`/`secret-github`/`version`).
+
+- **Generation is strictly one-way: the extension writes the script and never executes
+  it.** A committed file is repo-controlled input — running it from the extension would
+  hand arbitrary code execution to any cloned repo (§9). The UI keeps its typed
+  `sbx.ts`/`ops.ts` paths; parity is the template's job (`script.ts` mirrors those
+  modules' CLI shapes).
+- **Recipe-independent content.** The script derives everything at run time from
+  `config.yaml`/`identity.yaml` (including the missing-identity bootstrap), so its text
+  depends only on the extension version — recipe edits never require regeneration, and
+  git noise is limited to upgrades. It contains no secrets and no project values.
+- **Update policy.** Header = `generated by Sandbox Console v<X>` + a sha256 of the rest
+  of the file. On activation and after every form save: missing → write; identical →
+  no-op; unmodified-but-older → silent refresh; **hash mismatch (manual edits) → never
+  clobbered silently** (explicit Overwrite prompt). A sibling `.gitattributes` pins LF.
+- **Runners.** `runner-create <slug>` instantiates the recipe's `default: true` entry as
+  an **ephemeral** clone-mode instance `<name>-<key>-<id>-p<slug>` (agent/image/secret
+  names/caps from the recipe; defaults `-m 8g --cpus 4`) — never written back into the
+  recipe; discovery is by name contract (`runners`). `runner-rm` refuses to destroy a
+  runner until its work is pushed or `git fetch sandbox-<runner>` succeeds (`--force`
+  overrides). `task` dispatches headless `claude -p` (foreground, `--json` with cost
+  reporting, or `--bg` with a `/tmp` log-file convention).
+- **Bash deliberately** (Git Bash on Windows): secret values only flow through bash
+  pipes — piping from PowerShell corrupts stored secrets with a BOM. `sbx` is resolved
+  like `sbxPath()` (PATH, then `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`); the
+  Git-Bash `/d/...` working directory doubles as the in-sandbox mount path (§3).
+
+## 14. Known limitations & open questions
 
 - **Single workspace folder** — multi-root workspaces operate on `workspaceFolders[0]`.
 - **No ⚠ Failed state** — discovery surfaces any failed/error sbx status as **Stopped**
