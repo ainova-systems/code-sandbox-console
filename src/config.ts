@@ -10,7 +10,7 @@ import { parse, stringify } from "yaml";
  * sandbox.ts (the only CLI shapers).
  */
 
-/** Filesystem policy for a sandbox (ARCHITECTURE §9). */
+/** Filesystem policy for a sandbox (Architecture §9). */
 export type MountMode = "direct" | "clone";
 
 /**
@@ -148,9 +148,8 @@ export function parseConfig(text: string): SandboxConfig {
   const sandboxes = Object.keys(sandboxesRaw).map((key) =>
     parseSpec(key, sandboxesRaw[key])
   );
-  if (sandboxes.length === 0) {
-    throw new ConfigError("no sandboxes defined");
-  }
+  // An empty `sandboxes:` map is valid — the UI treats it like an absent recipe
+  // (offers New Sandbox) rather than refusing to work with the file.
   return { version, name, sandboxes };
 }
 
@@ -160,8 +159,8 @@ function configUri(root: vscode.Uri): vscode.Uri {
 
 /**
  * Read `.sandbox/config.yaml` if present. Returns undefined when the file is absent
- * (callers fall back to the default single-Claude behaviour). Throws a descriptive
- * Error when the file exists but is malformed.
+ * (no recipe yet — callers offer New Sandbox; there is no implicit default sandbox).
+ * Throws a descriptive Error when the file exists but is malformed.
  */
 export async function readConfig(
   root: vscode.Uri

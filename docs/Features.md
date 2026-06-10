@@ -1,17 +1,22 @@
-# Functional Requirements Specification
+# Features — Sandbox Console for VS Code
 
-# Sandbox Console for VS Code
-
-> **Status:** Initial draft (v0.1)
-> **Document:** Functional Requirements Document (FRD)
+> **Status:** Current business/functional truth for the shipped extension — every
+> statement below describes the product as it is **now**. Requirement IDs (`FR-0xx`)
+> are stable and cited throughout the code and commits; never renumber them.
+> History and the reasoning behind past changes live in append-only iteration specs
+> under [`specs/`](specs/). Technical design: [Architecture.md](Architecture.md).
 
 ## 1. Overview
 
-Sandbox Console provides a terminal-first experience inside VS Code, allowing developers to run AI coding agents such as Claude Code, Codex, Gemini CLI, and future agents inside isolated persistent sandboxes.
+Sandbox Console provides a terminal-first experience inside VS Code, allowing developers
+to run AI coding agents such as Claude Code, Codex, Gemini CLI, and future agents inside
+isolated persistent sandboxes.
 
-The experience must feel identical to using a normal terminal window while providing isolation, persistence, and security through sandbox execution.
+The experience must feel identical to using a normal terminal window while providing
+isolation, persistence, and security through sandbox execution.
 
-The user should not need to understand Docker, containers, virtual machines, or sandbox lifecycle management.
+The user should not need to understand Docker, containers, virtual machines, or sandbox
+lifecycle management.
 
 ---
 
@@ -43,19 +48,21 @@ The user should not need to understand Docker, containers, virtual machines, or 
 When a project has no sandbox:
 
 ```text
-Sandbox not found.
+No sandboxes for this repo.
 
-[ Create Claude Sandbox ]
-[ Create Codex Sandbox ]
+[ New Sandbox ]
 ```
 
-User selects an agent.
+User selects an agent (and optional environment) in the New Sandbox form.
 
 Sandbox is created automatically.
 
 Terminal opens automatically.
 
 Agent starts automatically.
+
+There is no implicit default sandbox — every sandbox is defined explicitly via the form
+and recorded in the committed recipe (FR-009).
 
 ---
 
@@ -64,24 +71,22 @@ Agent starts automatically.
 When a sandbox already exists:
 
 ```text
-Claude Sandbox Found
+Claude Sandbox found · running
 
-Status: Running
-
-[ Attach ]
+[ Connect ]
 ```
 
 or
 
 ```text
-Claude Sandbox Found
+Claude Sandbox found · stopped
 
-Status: Stopped
-
-[ Start and Attach ]
+[ Connect ]
 ```
 
-The default action must always be resume.
+The default action must always be resume. (**Connect** is the UI label for the attach
+action; the underlying sbx operation is `sbx run <name>`, which auto-resumes a stopped
+sandbox — there is no separate Start.)
 
 The system must never encourage creating duplicate sandboxes.
 
@@ -106,10 +111,10 @@ No custom agent UI is required.
 If a sandbox exists:
 
 ```text
-Attach
+Connect
 ```
 
-must always be the primary action.
+(the attach action) must always be the primary action.
 
 Creating a new sandbox should be a secondary action.
 
@@ -146,13 +151,17 @@ The extension shall automatically detect the current workspace.
 
 The extension shall associate sandboxes with repositories.
 
-Recommended identity:
+Repository state lives in a `.sandbox/` folder at the repository root, split by git
+treatment (see Architecture §6):
 
-```text
-Repository ID
-+
-Agent Type
-```
+* `.sandbox/config.yaml` — **committed**, the shared recipe (FR-009) including the
+  project `name`.
+* `.sandbox/identity.yaml` — **gitignored**, a short random local `id` (the extension
+  also writes `.sandbox/.gitignore` so the id is never committed).
+
+The sbx sandbox name is `<name>-<key>-<id>`. The local `id` makes clones, copies, and
+git worktrees conflict-free: each working tree generates its own on first use and so
+maps to its own sandboxes (enables parallel sandboxes per worktree).
 
 Example:
 
@@ -162,35 +171,6 @@ my-repo
  ├─ Codex Sandbox
  └─ Gemini Sandbox
 ```
-
-### Repository identity persistence
-
-The Repository ID shall be persisted in a `.sandbox` file at the repository root.
-
-```jsonc
-// .sandbox
-{
-  "id": "f3c1a2e0-...",   // stable UUID; the key sandboxes are associated with
-  "name": "my-repo"       // human-readable label shown in the Sandbox Explorer
-}
-```
-
-Rules:
-
-* On workspace open, the extension shall read `.sandbox` to discover the associated
-  sandboxes (FR-002). Identity is keyed on `id`, never on the filesystem path or git remote.
-* If `.sandbox` is absent, the extension shall generate it on first sandbox creation (FR-003).
-* `.sandbox` is **gitignored** — it is local, per-developer and per-working-tree, not
-  shared via git. A fresh clone generates a new identity; each git worktree of the repo
-  gets its own `.sandbox`, so it can map to its own sandbox (enables parallel sandboxes
-  per worktree).
-
-> **v0.2 revision (see ARCHITECTURE §14):** `.sandbox` becomes a **folder**. The shared,
-> **committed** `.sandbox/config.yaml` (FR-009) holds the project `name` + sandboxes; the
-> local `.sandbox/identity.yaml` holds only a short random `id`. The sbx sandbox name is
-> `<name>-<key>-<id>` — the id makes clones/copies/worktrees conflict-free. `identity.yaml`
-> is gitignored (the extension writes `.sandbox/.gitignore` for that); `config.yaml`,
-> `.gitignore`, and any `Dockerfile` are committed. Format is YAML, not JSON.
 
 ---
 
@@ -207,19 +187,25 @@ Possible outcomes:
 * Sandbox exists and stopped
 * Sandbox exists and failed
 
+Discovery is silent when the `sbx` CLI is not installed; a repo with no recipe is
+offered the New Sandbox form at most once per workspace.
+
 ---
 
 ## FR-003 Sandbox Creation
 
 Users shall be able to create sandboxes from VS Code.
 
-Creation should require a single action.
+Creation should require a single action once the agent is chosen.
 
 Example:
 
 ```text
-Create Claude Sandbox
+New Sandbox → pick agent → Create
 ```
+
+Creation goes through the New Sandbox form — agent, optional title/group, secrets,
+ports, environment — never a hand-edited YAML file.
 
 After creation:
 
@@ -233,11 +219,7 @@ After creation:
 
 Users shall be able to start a stopped sandbox.
 
-Example:
-
-```text
-Start Sandbox
-```
+Starting is folded into **Connect** (`sbx run` auto-resumes a stopped sandbox).
 
 State shall be preserved.
 
@@ -247,13 +229,7 @@ No recreation should occur.
 
 ## FR-005 Sandbox Attach
 
-Users shall be able to attach to running sandboxes.
-
-Example:
-
-```text
-Attach
-```
+Users shall be able to attach to running sandboxes (UI label: **Connect**).
 
 The existing session becomes visible.
 
@@ -275,14 +251,15 @@ Stopping must preserve:
 
 ## FR-007 Sandbox Rebuild / Recreate / Edit
 
-The single v0.1 "Rebuild" is split into three distinct operations (see ARCHITECTURE §16):
+"Rebuild" covers three distinct operations (see Architecture §11):
 
 * **Recreate** — `rm --force` + recreate from the recipe. **Destroys** sandbox state
   (host workspace untouched). Confirmation required.
 * **Rebuild image** — re-build the custom image (FR-008) and recreate the sandbox from
   it. Refreshes image-baked tooling; work on the mounted workspace is preserved.
-* **Edit** — add/rotate secrets or inject a kit into a **running** sandbox
-  (non-destructive, no recreate).
+* **Edit** — add/rotate secrets and published ports on a **running** sandbox
+  (non-destructive, no recreate). Kit injection (`sbx kit add`) is a planned follow-up
+  (Architecture §7).
 
 ## FR-008 Custom Environment (preinstalled tooling)
 
@@ -294,7 +271,7 @@ preinstalled, instead of the agent's default image.
   (docker-compose semantics).
 * Custom Dockerfiles must extend an agent base
   (`FROM docker/sandbox-templates:<flavor>`) so the agent binary, `agent` user, and proxy
-  env survive (ARCHITECTURE §15). Build steps that need root use `USER root` … `USER agent`.
+  env survive (Architecture §7). Build steps that need root use `USER root` … `USER agent`.
 * Build pipeline (verified): `docker build` → `docker save` → `sbx template load` →
   `sbx run/create -t <image>`. **Rebuild image** re-runs this pipeline.
 * Secrets shall **never** be baked into images — they are provisioned via FR-032.
@@ -307,7 +284,7 @@ recipe (YAML), shared across clones/copies via git:
 ```yaml
 version: 1
 sandboxes:
-  claude:                     # logical key → sandbox "<name>-claude"
+  claude:                     # logical key → sandbox "<name>-claude-<id>"
     agent: claude             # sbx agent
     image: myrepo-dev:latest  # optional custom image
     dockerfile: Dockerfile    # optional; if set → build `image` from .sandbox/Dockerfile
@@ -317,7 +294,7 @@ sandboxes:
 ```
 
 The recipe declares one or more sandboxes per repo (multi-agent, e.g. `claude` + `shell`).
-Identity (the local label) is kept separately and gitignored (FR-001).
+Identity (the local id) is kept separately and gitignored (FR-001).
 
 ---
 
@@ -372,7 +349,8 @@ Gemini Sandbox
 Shell Sandbox
 ```
 
-Each tab shall operate independently.
+Each tab shall operate independently. (One **agent** terminal per sandbox is reused —
+a second attach would race the same session; multiple **shell** terminals are fine.)
 
 ---
 
@@ -382,23 +360,11 @@ Each tab shall operate independently.
 
 Users shall be able to launch Claude Code directly.
 
-Example:
-
-```text
-Open Claude
-```
-
 ---
 
 ## FR-021 Codex Support
 
 Users shall be able to launch Codex directly.
-
-Example:
-
-```text
-Open Codex
-```
 
 ---
 
@@ -412,6 +378,9 @@ Examples:
 * OpenAI Agents
 * Aider
 * Custom MCP Agents
+
+The agent list is discovered live from the installed `sbx` (static fallback), so new
+agents appear in the New Sandbox form without an extension update.
 
 ---
 
@@ -451,13 +420,15 @@ Examples:
 ## FR-032 Secret Provisioning (UX)
 
 The extension shall provision service secrets from the UI, so users never run `sbx secret`
-by hand (see ARCHITECTURE §8).
+by hand (see Architecture §8).
 
 * The recipe (FR-009) lists required secret **names** (e.g. `github`); the extension reads
-  `sbx secret ls` and prompts only for the ones not already satisfied.
-* Values are entered in a password input and piped via
-  `sbx secret set [-g | <sandbox>] <service> --password-stdin` — never shown in shell
-  history, never written to the repo, never baked into images.
+  `sbx secret ls` and prompts only for the ones not already satisfied (re-checked on
+  every Connect/Shell, so a cancelled prompt is recoverable).
+* Values are entered in a password input and piped over stdin to
+  `sbx secret set [-g | <sandbox>] <service>` (no flag — `--password-stdin` is a
+  registry-login option, not used for service secrets) — never in argv or shell history,
+  never written to the repo, never baked into images.
 * Scope is user-chosen: **per-sandbox** (deliberate for repo-scoped tokens) or global `-g`
   (shared creds like the Anthropic key).
 * `anthropic` remains satisfied by the host-global OAuth/keychain credential by default
@@ -465,7 +436,7 @@ by hand (see ARCHITECTURE §8).
 * The form separates **global** (host-shared, read-only) credentials from **custom**
   (this-sandbox) ones. For `github`, beyond the proxy secret the extension also runs
   `gh auth login --with-token` inside the sandbox (best-effort, only if `gh` is present)
-  so the `gh` CLI itself is authenticated — see ARCHITECTURE §17.
+  so the `gh` CLI itself is authenticated — see Architecture §8.
 
 ---
 
@@ -473,19 +444,17 @@ by hand (see ARCHITECTURE §8).
 
 ## FR-040 Automatic Workspace Mount
 
-Current project shall be mounted automatically.
+Current project shall be mounted automatically. No manual configuration required.
 
-Example:
+With the direct mount on Windows, each host drive is mounted at `/<drive-letter>`:
 
 ```text
-Host
- └─ Repository
-
-Sandbox
- └─ /workspace
+Host                          Sandbox
+ └─ D:\Repositories\app   →    └─ /d/Repositories/app
 ```
 
-No manual configuration required.
+(`/home/agent/workspace` is an unrelated empty directory, not the mount.) Workspaces on
+UNC / `\\wsl$` network paths are not supported and are rejected with a clear error.
 
 ---
 
@@ -505,31 +474,25 @@ Examples:
 
 # 10. Sandbox Explorer
 
-A dedicated VS Code sidebar shall be available.
+A dedicated VS Code sidebar shall be available, **scoped to the current repo**.
+
+Nodes are this repo's recipe sandboxes (label = `title || key`), optionally grouped into
+folders by `group`. Per-node actions are **state-gated**, enforcing the lifecycle
+running → Stop → Edit/Rebuild/Delete instance → Remove from config. Two deletes:
+**Delete instance** (destroys the sandbox, keeps the definition — recreatable) vs
+**Remove from config** (drops it from `config.yaml`, shown only once the instance is
+gone). See Architecture §12.
 
 Example:
 
 ```text
-SANDBOXES
+SANDBOXES — my-repo
 
-my-repo
- ├─ Claude
- ├─ Codex
-
-ERP
- ├─ Claude
-
-CRM
- ├─ Codex
+Services
+ ├─ ● Backend     (claude)
+ └─ ○ Frontend    (claude)
+● Shell           (shell)
 ```
-
-> **v0.2 (implemented, see ARCHITECTURE §17):** the Explorer is **scoped to the current
-> repo** (not a global cross-repo list). Nodes are this repo's recipe sandboxes
-> (label = `title || key`), optionally grouped into folders by `group`. Per-node actions
-> are **state-gated**, enforcing the lifecycle running → Stop → Edit/Rebuild/Delete
-> instance → Remove from config. Two deletes: **Delete instance** (destroys the sandbox,
-> keeps the definition — recreatable) vs **Remove from config** (drops it from
-> `config.yaml`, shown only once the instance is gone).
 
 ---
 
@@ -538,33 +501,32 @@ CRM
 ```text
 ● Running
 ○ Stopped
-⚠ Failed
++ Not created
 ```
+
+The implemented state model is `absent | running | stopped` — discovery (FR-002)
+surfaces any failed/error status reported by sbx as **Stopped**; a distinct ⚠ Failed
+indicator is not implemented.
 
 ---
 
 # 11. Commands
 
-## Sandbox Commands
+Palette commands (category **Sandbox**):
 
 ```text
-Sandbox: Create
-Sandbox: Start
-Sandbox: Stop
-Sandbox: Restart
-Sandbox: Attach
-Sandbox: Rebuild
-Sandbox: Delete
+Connect       — create-or-attach; Start/Attach folded in (sbx run resumes)
+Stop
+Shell
+Rebuild
+New Sandbox   — the agent is picked in the form; no per-agent Open commands
+Refresh
 ```
 
-## Agent Commands
+Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
+`Rebuild`, `Edit`, `Delete instance`, `Remove from config`.
 
-```text
-Open Claude
-Open Codex
-Open Gemini
-Open Shell
-```
+There is no separate Start/Restart/Delete palette command.
 
 ---
 
@@ -598,6 +560,8 @@ Restricted Internet
 No Internet
 ```
 
+(Policy **UIs** are deferred; the underlying sbx policies apply — see Architecture §9.)
+
 ---
 
 # 13. Future MCP Support
@@ -628,7 +592,7 @@ Potential use cases:
 A successful implementation allows a developer to:
 
 1. Open a repository
-2. Click Attach
+2. Click Connect
 3. Continue using Claude or Codex immediately
 
 Expected workflow:
@@ -636,7 +600,7 @@ Expected workflow:
 ```text
 Open Repository
         ↓
-Attach Sandbox
+Connect to Sandbox
         ↓
 Terminal Opens
         ↓
@@ -645,4 +609,5 @@ Agent Available
 Continue Working
 ```
 
-The developer should feel they are working in a normal VS Code terminal while all execution occurs inside a persistent isolated sandbox.
+The developer should feel they are working in a normal VS Code terminal while all
+execution occurs inside a persistent isolated sandbox.

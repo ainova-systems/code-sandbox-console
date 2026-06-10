@@ -68,13 +68,46 @@ export async function dockerAvailable(): Promise<boolean> {
   return code === 0;
 }
 
+/**
+ * Resolve a config-relative path and require it to stay inside the repo. The recipe is
+ * committed (FR-009), so a malicious config.yaml must not be able to point `docker build`
+ * at arbitrary host paths via absolute paths or `..` escapes.
+ */
+function resolveInsideRepo(
+  repoRoot: string,
+  base: string,
+  rel: string,
+  what: string
+): string {
+  if (path.isAbsolute(rel)) {
+    throw new Error(
+      `.sandbox/config.yaml: ${what} must be a relative path inside the repository, got "${rel}"`
+    );
+  }
+  const abs = path.resolve(base, rel);
+  const root = path.resolve(repoRoot);
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    throw new Error(
+      `.sandbox/config.yaml: ${what} "${rel}" resolves outside the repository`
+    );
+  }
+  return abs;
+}
+
 function resolvePaths(
   spec: SandboxSpec,
   repoRoot: string
 ): { dockerfile: string; context: string } {
   return {
-    dockerfile: path.join(repoRoot, CONFIG_DIR, spec.dockerfile as string),
-    context: spec.context ? path.join(repoRoot, spec.context) : repoRoot,
+    dockerfile: resolveInsideRepo(
+      repoRoot,
+      path.join(repoRoot, CONFIG_DIR),
+      spec.dockerfile as string,
+      "dockerfile"
+    ),
+    context: spec.context
+      ? resolveInsideRepo(repoRoot, repoRoot, spec.context, "context")
+      : repoRoot,
   };
 }
 
@@ -86,9 +119,17 @@ export async function buildAndLoad(
   if (!spec.image || !spec.dockerfile) {
     return;
   }
+  sbx.assertImageTag(spec.image); // committed config → docker argv (FR-009)
   const { dockerfile, context } = resolvePaths(spec, repoRoot);
+  const dfText = await fs
+    .readFile(dockerfile, "utf8")
+    .catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        throw new Error(`Dockerfile not found: ${dockerfile}`);
+      }
+      throw err;
+    });
   // Simple lint: a usable Dockerfile must declare a base image.
-  const dfText = await fs.readFile(dockerfile, "utf8").catch(() => "");
   if (!/^\s*FROM\s+\S+/im.test(dfText)) {
     throw new Error(
       `${spec.dockerfile} must start with a FROM line (extend a docker/sandbox-templates base image).`

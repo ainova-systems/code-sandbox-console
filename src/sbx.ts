@@ -52,6 +52,58 @@ function run(args: string[]): Promise<RunResult> {
     }));
 }
 
+/**
+ * Argv allowlists: sandbox names, agent ids, image tags and secret services originate in
+ * the committed `.sandbox/config.yaml` (FR-009), so a malicious repo controls them. All
+ * CLI calls use execFile/spawn (no shell), which leaves option injection as the smuggling
+ * vector — every such value must match a conservative pattern and must never start with
+ * "-". Throw a descriptive error; never sanitize silently.
+ */
+const SANDBOX_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+const AGENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const IMAGE_TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]*$/;
+const SECRET_SERVICE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Validate a sandbox name before it enters argv; returns it for chaining. */
+export function assertSandboxName(name: string): string {
+  if (!SANDBOX_NAME_RE.test(name)) {
+    throw new Error(
+      `invalid sandbox name "${name}" (must start with a letter or digit; then letters, digits, "._+-")`
+    );
+  }
+  return name;
+}
+
+/** Validate an agent id (claude, codex, ...) before it enters argv. */
+export function assertAgentId(agent: string): string {
+  if (!AGENT_ID_RE.test(agent)) {
+    throw new Error(
+      `invalid agent id "${agent}" (must start with a letter or digit; then letters, digits, "._-")`
+    );
+  }
+  return agent;
+}
+
+/** Validate an image tag/ref before it enters argv. */
+export function assertImageTag(image: string): string {
+  if (!IMAGE_TAG_RE.test(image)) {
+    throw new Error(
+      `invalid image tag "${image}" (must start with a letter or digit; then letters, digits, "._:/@-")`
+    );
+  }
+  return image;
+}
+
+/** Validate a secret service id (anthropic, github, ...) before it enters argv. */
+export function assertSecretService(service: string): string {
+  if (!SECRET_SERVICE_RE.test(service)) {
+    throw new Error(
+      `invalid secret service "${service}" (must start with a letter or digit; then letters, digits, "._-")`
+    );
+  }
+  return service;
+}
+
 /** True if the sbx CLI is invokable (does not imply the user is signed in). */
 export async function available(): Promise<boolean> {
   const { code } = await run(["version"]);
@@ -103,14 +155,14 @@ export interface CreateOpts {
 
 /** Create a sandbox without attaching (FR-003). */
 export async function create(opts: CreateOpts): Promise<void> {
-  const args = ["create", "--name", opts.name];
+  const args = ["create", "--name", assertSandboxName(opts.name)];
   if (opts.clone) {
     args.push("--clone");
   }
   if (opts.image) {
-    args.push("-t", opts.image);
+    args.push("-t", assertImageTag(opts.image));
   }
-  args.push(opts.agent, opts.workspace);
+  args.push(assertAgentId(opts.agent), opts.workspace);
   const { stderr, code } = await run(args);
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx create failed for ${opts.name}`);
@@ -119,7 +171,7 @@ export async function create(opts: CreateOpts): Promise<void> {
 
 /** Stop a sandbox, retaining all state; resume later with `sbx run` (FR-006). */
 export async function stop(name: string): Promise<void> {
-  const { stderr, code } = await run(["stop", name]);
+  const { stderr, code } = await run(["stop", assertSandboxName(name)]);
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx stop failed for ${name}`);
   }
@@ -129,9 +181,17 @@ export async function stop(name: string): Promise<void> {
  * Translate a host path to its in-sandbox mount path. On Windows, sbx mounts
  * each host drive at /<drive-letter>, so D:\Repositories\app -> /d/Repositories/app.
  * Non-Windows paths are already POSIX and pass through. Used for `exec -w` to
- * drop a shell into the workspace (FR-040).
+ * drop a shell into the workspace (FR-040). Throws for UNC / \\wsl$ paths, which
+ * have no drive-letter mount inside the sandbox.
  */
 export function hostToSandboxPath(hostPath: string): string {
+  // UNC and \\wsl$ paths have no drive-letter mount; converting them blindly yields a
+  // plausible-looking but nonexistent in-sandbox path, so fail loudly instead.
+  if (/^[\\/]{2}/.test(hostPath)) {
+    throw new Error(
+      `Workspaces on network/WSL paths are not supported by Docker Sandboxes: ${hostPath} — open the folder from a local drive.`
+    );
+  }
   const win = /^([A-Za-z]):[\\/](.*)$/.exec(hostPath);
   if (win) {
     return `/${win[1].toLowerCase()}/${win[2].replace(/\\/g, "/")}`;
@@ -141,7 +201,7 @@ export function hostToSandboxPath(hostPath: string): string {
 
 /** Remove a sandbox and all its state — destructive (FR-007 / Delete). */
 export async function remove(name: string): Promise<void> {
-  const { stderr, code } = await run(["rm", "--force", name]);
+  const { stderr, code } = await run(["rm", "--force", assertSandboxName(name)]);
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx rm failed for ${name}`);
   }
@@ -219,9 +279,15 @@ export async function templateExists(imageTag: string): Promise<boolean> {
   if (code !== 0) {
     return false;
   }
-  const i = imageTag.lastIndexOf(":");
-  const repo = i >= 0 ? imageTag.slice(0, i) : imageTag;
-  const tag = i >= 0 ? imageTag.slice(i + 1) : "latest";
+  // Image refs are [host[:port]/]repo[:tag][@digest]: drop any digest, then treat the
+  // last ':' as the tag separator only when it follows the last '/' (a registry port
+  // like localhost:5000/img must not be mistaken for a tag).
+  const at = imageTag.indexOf("@");
+  const base = at >= 0 ? imageTag.slice(0, at) : imageTag;
+  const colon = base.lastIndexOf(":");
+  const hasTag = colon > base.lastIndexOf("/");
+  const repo = hasTag ? base.slice(0, colon) : base;
+  const tag = hasTag ? base.slice(colon + 1) : "latest";
   for (const line of stdout.split(/\r?\n/)) {
     const cols = line.trim().split(/\s+/);
     if (cols[0] === repo && cols[1] === tag) {
@@ -290,9 +356,9 @@ export async function secretSet(opts: {
   if (opts.scope === "global") {
     args.push("-g");
   } else {
-    args.push(opts.scope);
+    args.push(assertSandboxName(opts.scope));
   }
-  args.push(opts.service);
+  args.push(assertSecretService(opts.service));
   const { stderr, code } = await runWithStdin(args, opts.value);
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx secret set ${opts.service} failed`);
@@ -301,9 +367,12 @@ export async function secretSet(opts: {
 
 /** Publish a sandbox port to the host (host:sandbox 1:1). Sandbox must be running. */
 export async function publishPort(name: string, port: number): Promise<void> {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`invalid port ${port} (must be an integer in 1-65535)`);
+  }
   const { stderr, code } = await run([
     "ports",
-    name,
+    assertSandboxName(name),
     "--publish",
     `${port}:${port}`,
   ]);
@@ -318,7 +387,7 @@ function execWithStdin(
   command: string[],
   input: string
 ): Promise<RunResult> {
-  return runWithStdin(["exec", "-i", name, ...command], input);
+  return runWithStdin(["exec", "-i", assertSandboxName(name), ...command], input);
 }
 
 /** Best-effort: does a command exist inside the sandbox? (auto-starts it if stopped). */
@@ -326,7 +395,18 @@ export async function sandboxHasCommand(
   name: string,
   cmd: string
 ): Promise<boolean> {
-  const { code } = await run(["exec", name, "bash", "-lc", `command -v ${cmd}`]);
+  // `cmd` is interpolated into a `bash -lc` string — the one shell-interpreted slot in
+  // this module — so hold it to the same allowlist as the other argv values.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(cmd)) {
+    throw new Error(`invalid command name "${cmd}"`);
+  }
+  const { code } = await run([
+    "exec",
+    assertSandboxName(name),
+    "bash",
+    "-lc",
+    `command -v ${cmd}`,
+  ]);
   return code === 0;
 }
 

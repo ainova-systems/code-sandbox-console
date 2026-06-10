@@ -35,16 +35,21 @@
     "url": "https://github.com/ainova-systems/code-sandbox-console/issues"
   },
   "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Sandbox Console executes sbx CLI commands derived from the workspace's committed .sandbox/config.yaml, so it only runs in trusted workspaces."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Sandbox Console needs a real filesystem and the local sbx CLI, which are unavailable in virtual workspaces."
+    }
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
   "contributes": {
     "commands": [
-      {
-        "command": "sandboxConsole.createClaude",
-        "title": "Create Claude Sandbox",
-        "category": "Sandbox"
-      },
       {
         "command": "sandboxConsole.attach",
         "title": "Connect",
@@ -131,10 +136,40 @@
     "viewsWelcome": [
       {
         "view": "sandboxConsoleExplorer",
-        "contents": "No sandboxes yet for this repo.\n[New Sandbox](command:sandboxConsole.newSandbox)\n[Create Claude Sandbox](command:sandboxConsole.createClaude)"
+        "contents": "No sandboxes yet for this repo.\n[New Sandbox](command:sandboxConsole.newSandbox)"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "sandboxConsole.item.attach",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.stop",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.shell",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.rebuild",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.edit",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.destroy",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.remove",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "sandboxConsole.newSandbox",
@@ -219,9 +254,9 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "~1.90.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.23.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.5.0"
   },
   "dependencies": {
