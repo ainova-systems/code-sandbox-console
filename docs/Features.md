@@ -269,6 +269,11 @@ preinstalled, instead of the agent's default image.
 * The image is referenced by the recipe (FR-009): `image:` is the tag; if `dockerfile:`
   is set, the extension builds that Dockerfile and tags it as `image:`
   (docker-compose semantics).
+* The New/Edit form's *Custom: Dockerfile* choice takes an optional **file name** under
+  `.sandbox/` (empty → `<key>.Dockerfile`). A missing file is generated `FROM` the
+  **selected agent's base template** (the `-docker` flavor the CLI boots by default);
+  an existing file is reused as-is — several sandboxes can share one committed
+  Dockerfile.
 * Custom Dockerfiles must extend an agent base
   (`FROM docker/sandbox-templates:<flavor>`) so the agent binary, `agent` user, and proxy
   env survive (Architecture §7). Build steps that need root use `USER root` … `USER agent`.

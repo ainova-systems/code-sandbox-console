@@ -20,7 +20,9 @@ From proof of concept to a managed Sandbox UI, plus the rebrand to **Sandbox Con
   sandbox definitions (FR-009).
 - Custom environments per sandbox: the agent's default image, a custom Dockerfile
   (built via `docker build` → `sbx template load`, FR-008), or a registry image
-  pulled as-is.
+  pulled as-is. The Dockerfile's name is editable in the form (so several sandboxes
+  can share one committed file) and a generated file starts `FROM` the selected
+  agent's own base template.
 - Credential provisioning on request via `sbx secret set` with the value piped
   over stdin (FR-032) — never in the repo, image, or a plaintext env var; for
   `github` it also runs `gh auth login --with-token` inside the sandbox.

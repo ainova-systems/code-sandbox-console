@@ -185,7 +185,7 @@ complementary mechanisms (see the `customize/` docs linked at the top of this fi
 **Templates — baked image (the `image` + `dockerfile` path).** Verified end-to-end:
 
 ```text
-docker build -t <image> -f .sandbox/<key>.Dockerfile <context>   # FROM an agent base image
+docker build -t <image> -f .sandbox/<dockerfile> <context>   # FROM an agent base image
 docker save <image> -o <tar>                               # host docker store ≠ sbx store
 sbx template load <tar>                                     # into the sbx runtime image store
 sbx create -t <image> <agent> <workspace>                  # custom rootfs, agent preserved
@@ -213,14 +213,20 @@ one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (displ
 for New it also derives the sandbox key/name), **Agent**, **Group** (organises the tree
 into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
 **Advanced** (Environment: Default / Custom Dockerfile / Custom image; published ports as
-add/remove rows; `direct | clone` mount). Agent/secret lists come from the installed sbx
-(static fallback), so the form tracks the local version.
+add/remove rows; `direct | clone` mount). The Dockerfile choice takes an optional **file
+name** under `.sandbox/` (empty → `<key>.Dockerfile`): a missing file is generated `FROM`
+the selected agent's base template (`agentTemplate()` — the `-docker` flavor the CLI
+boots by default; claude → `claude-code-docker`); an existing file is reused untouched,
+so several sandboxes can share one committed Dockerfile (each still builds/tags its own
+`image`). The name is held to the same no-separators/no-leading-dot rule as recipe keys
+(§9) — it must never steer the write target outside `.sandbox/`. Agent/secret lists come
+from the installed sbx (static fallback), so the form tracks the local version.
 
 **Save = persist + apply.** The definition is written to `.sandbox/config.yaml` AND
 applied to the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply
 **live**; image/mount changes prompt a **Rebuild** (recreate; workspace on the mount
-preserved). A just-generated Dockerfile is **not** auto-built (it carries only the
-default shell base) — the user edits it, then Rebuild/Connect builds it. An edit
+preserved). A just-generated Dockerfile is **not** auto-built (it carries only the agent
+base, no tooling yet) — the user edits it, then Rebuild/Connect builds it. An edit
 round-trip preserves fields the form does not expose (e.g. `context`), keeps the
 committed secret requirements regardless of what is satisfied on this machine, and a
 failed create retries against the same recipe entry (no duplicate keys). A malformed
