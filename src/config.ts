@@ -39,6 +39,8 @@ export interface SandboxSpec {
   secrets: string[];
   /** Ports to publish from the sandbox. */
   ports: number[];
+  /** Preferred target for the status bar / single-action commands (FR-050). */
+  default?: boolean;
 }
 
 /** The parsed `.sandbox/config.yaml` recipe. */
@@ -94,6 +96,16 @@ function asNumberArray(value: unknown, what: string): number[] {
   return value as number[];
 }
 
+function optBool(value: unknown, what: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new ConfigError(`${what} must be true or false`);
+  }
+  return value || undefined;
+}
+
 function parseMount(value: unknown, what: string): MountMode {
   if (value === undefined || value === "direct") {
     return "direct";
@@ -125,6 +137,7 @@ function parseSpec(key: string, raw: unknown): SandboxSpec {
     mount: parseMount(obj.mount, `${at}.mount`),
     secrets: asStringArray(obj.secrets, `${at}.secrets`),
     ports: asNumberArray(obj.ports, `${at}.ports`),
+    default: optBool(obj.default, `${at}.default`),
   };
 }
 
@@ -192,6 +205,9 @@ export async function writeConfig(
     }
     if (s.group) {
       entry.group = s.group;
+    }
+    if (s.default) {
+      entry.default = true;
     }
     if (s.image) {
       entry.image = s.image;

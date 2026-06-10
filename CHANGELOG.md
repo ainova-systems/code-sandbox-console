@@ -26,6 +26,9 @@ From proof of concept to a managed Sandbox UI, plus the rebrand to **Sandbox Con
   `github` it also runs `gh auth login --with-token` inside the sandbox.
 - Multi-agent, multi-sandbox support per repo (Claude Code, Codex, Gemini,
   OpenCode, plain shell) with a service registry for credentials.
+- Status bar shows the active sandbox by its display name; clicking it (or
+  `Sandbox: Switch Sandbox`) opens a picker over all recipe sandboxes, with an
+  optional committed `default: true` recipe flag (FR-050).
 - MIT license.
 
 ### Changed

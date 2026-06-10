@@ -71,7 +71,7 @@ and recorded in the committed recipe (FR-009).
 When a sandbox already exists:
 
 ```text
-Claude Sandbox found · running
+Sandbox Backend (Claude) found · running
 
 [ Connect ]
 ```
@@ -79,7 +79,7 @@ Claude Sandbox found · running
 or
 
 ```text
-Claude Sandbox found · stopped
+Sandbox Backend (Claude) found · stopped
 
 [ Connect ]
 ```
@@ -291,6 +291,7 @@ sandboxes:
     mount: direct             # optional: direct | clone
     secrets: [github]         # secret NAMES only (values via FR-032)
     ports: [5000, 5173]       # optional published ports
+    default: true             # optional: the sandbox the status bar / palette target (FR-050)
 ```
 
 The recipe declares one or more sandboxes per repo (multi-agent, e.g. `claude` + `shell`).
@@ -496,6 +497,24 @@ Services
 
 ---
 
+## Status Bar & Default Sandbox (FR-050)
+
+A status bar item shows the **active** sandbox — its display name (`title || key`) with
+the live state icon; the agent is in the tooltip. Clicking it (or running
+`Sandbox: Switch Sandbox`):
+
+* one defined sandbox → connects directly;
+* several → a Quick Pick of all recipe sandboxes (state, agent, default marker) plus
+  **New Sandbox…**; picking one connects and makes it the locally active sandbox;
+* none → the New Sandbox form.
+
+The sandbox the single-action commands (Connect / Stop / Shell / Rebuild) target
+resolves as: **locally last-picked** (per working copy) → the recipe's **`default: true`**
+entry (committed/shared; settable via a checkbox in the New/Edit form, single default
+per recipe) → the **first** recipe entry.
+
+---
+
 ## Status Indicators
 
 ```text
@@ -515,11 +534,12 @@ indicator is not implemented.
 Palette commands (category **Sandbox**):
 
 ```text
-Connect       — create-or-attach; Start/Attach folded in (sbx run resumes)
+Connect         — create-or-attach the active sandbox; Start/Attach folded in (sbx run resumes)
 Stop
 Shell
 Rebuild
-New Sandbox   — the agent is picked in the form; no per-agent Open commands
+Switch Sandbox  — pick the active sandbox from the recipe list (FR-050)
+New Sandbox     — the agent is picked in the form; no per-agent Open commands
 Refresh
 ```
 

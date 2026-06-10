@@ -71,6 +71,11 @@
         "category": "Sandbox"
       },
       {
+        "command": "sandboxConsole.pickSandbox",
+        "title": "Switch Sandbox",
+        "category": "Sandbox"
+      },
+      {
         "command": "sandboxConsole.newSandbox",
         "title": "New Sandbox",
         "category": "Sandbox",

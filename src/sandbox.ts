@@ -74,12 +74,22 @@ export async function refs(
   return config.sandboxes.map((spec) => ref(projectName, spec, identity.id));
 }
 
-/** The primary sandbox (first recipe entry), or undefined when none is defined yet. */
+/**
+ * The sandbox the single-action commands target (FR-050): the locally preferred key
+ * (last picked, if still defined) → the recipe's `default: true` entry → the first
+ * entry; undefined when none is defined yet.
+ */
 export async function primaryRef(
   root: vscode.Uri,
-  identity: SandboxIdentity
+  identity: SandboxIdentity,
+  preferKey?: string
 ): Promise<SandboxRef | undefined> {
-  return (await refs(root, identity))[0];
+  const all = await refs(root, identity);
+  return (
+    (preferKey ? all.find((r) => r.spec.key === preferKey) : undefined) ??
+    all.find((r) => r.spec.default) ??
+    all[0]
+  );
 }
 
 export function state(sandbox: SandboxRef): Promise<sbx.SandboxState> {

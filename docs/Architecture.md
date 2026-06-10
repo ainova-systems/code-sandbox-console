@@ -154,6 +154,7 @@ sandboxes:
   claude:                     # logical key (the <key> in the sandbox name)
     agent: claude             # required: sbx agent (claude/shell/codex/opencode/…)
     title: Backend            # optional: Explorer label (group: optional folder)
+    default: true             # optional: status bar / palette target (FR-050; one per recipe)
     image: myrepo-dev:latest  # optional: image tag to run with (-t)
     dockerfile: Dockerfile    # optional: path under .sandbox/; if set → build `image` from it
     mount: direct             # optional: direct | clone (FS policy; default direct)
@@ -355,6 +356,15 @@ error node that opens the file — never as an empty "No sandboxes yet" tree.
 **Title & Group (organising).** A spec may carry `title` (Explorer label; for New it also
 seeds the sandbox key/name) and `group` (folders the tree). Groups are organisational
 today and the natural hook for per-group governance (`sbx --profile`) later.
+
+**Status bar & the active sandbox (FR-050).** The status bar item shows the *active*
+sandbox by display name (`title || key`) with its state icon; the agent is in the
+tooltip. The active sandbox — also the target of the single-action palette commands —
+resolves as: locally last-picked key (`workspaceState`, per working copy) → the recipe's
+`default: true` entry (committed; the New/Edit form keeps it unique) → the first entry.
+Clicking the item (or `Sandbox: Switch Sandbox`) connects directly when one sandbox is
+defined, opens a Quick Pick (all recipe sandboxes + "New Sandbox…") when several are,
+and routes to the New Sandbox form when none is; picking updates the last-picked key.
 
 ## 13. Known limitations & open questions
 

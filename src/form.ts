@@ -33,6 +33,7 @@ interface SubmitPayload {
   secrets: string[];
   ports: number[];
   mount: string;
+  isDefault: boolean;
 }
 
 interface InitData {
@@ -50,6 +51,7 @@ interface InitData {
   secrets: string[];
   ports: number[];
   mount: string;
+  isDefault: boolean;
 }
 
 export async function openForm(
@@ -109,6 +111,7 @@ export async function openForm(
     secrets: current?.secrets ?? [],
     ports: current?.ports ?? [],
     mount: current?.mount ?? "direct",
+    isDefault: current?.default ?? false,
   };
 
   const panel = vscode.window.createWebviewPanel(
@@ -260,6 +263,7 @@ async function apply(
     mount: payload.mount === "clone" ? "clone" : "direct",
     secrets: specSecrets,
     ports: payload.ports ?? [],
+    default: payload.isDefault ? true : undefined,
   };
 
   // Derive (and validate) the sbx ref BEFORE persisting: a name that cannot pass the
@@ -267,9 +271,15 @@ async function apply(
   const ref = sandbox.ref(projectName, spec, identity.id);
 
   const exists = config.sandboxes.some((s) => s.key === key);
-  const sandboxes = exists
+  let sandboxes = exists
     ? config.sandboxes.map((s) => (s.key === key ? spec : s))
     : [...config.sandboxes, spec];
+  if (spec.default) {
+    // Single default per recipe (FR-050): the other entries lose the flag.
+    sandboxes = sandboxes.map((s) =>
+      s.key !== key && s.default ? { ...s, default: undefined } : s
+    );
+  }
   await writeConfig(root, {
     version: config.version || 1,
     name: projectName,
@@ -443,6 +453,7 @@ const SCRIPT = `(function(){
   if (I.agentLocked){ agSel.disabled = true; }
   document.getElementById('title').value = I.title || '';
   document.getElementById('group').value = I.group || '';
+  document.getElementById('isDefault').checked = !!I.isDefault;
 
   var gBox = document.getElementById('globals');
   if (I.globals && I.globals.length){
@@ -499,7 +510,8 @@ const SCRIPT = `(function(){
       image: document.getElementById('image').value.trim(),
       secrets: secrets,
       ports: ports,
-      mount: document.getElementById('mount').value
+      mount: document.getElementById('mount').value,
+      isDefault: document.getElementById('isDefault').checked
     }});
   });
 })();`;
@@ -572,6 +584,9 @@ function getHtml(data: InitData, nonce: string): string {
     <div class="field">
       <label class="lbl">Group</label>
       <input id="group" type="text" placeholder="group for organising in the Sandboxes view (optional)" />
+    </div>
+    <div class="field">
+      <label class="chip"><input id="isDefault" type="checkbox" /> Default sandbox — the status bar and palette commands target it</label>
     </div>
     <div class="field">
       <label class="lbl">Global credentials · shared, read-only</label>
