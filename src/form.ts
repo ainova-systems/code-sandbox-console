@@ -201,17 +201,14 @@ async function apply(
     key = pinned.key;
     agent = payload.agent;
   } else {
+    // The key is the stable technical id (sbx name, file names, image tags). It is
+    // deliberately NOT derived from the title — the title is a display label the
+    // user may rename at any time without touching instances or images.
     agent = payload.agent;
-    const slug = payload.title
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9.-]+/g, "-")
-      .replace(/^[-.]+|[-.]+$/g, "");
-    const base = slug || agent;
-    key = base;
+    key = agent;
     const used = new Set(config.sandboxes.map((s) => s.key));
     for (let n = 2; used.has(key); n++) {
-      key = `${base}-${n}`;
+      key = `${agent}-${n}`;
     }
   }
 
@@ -581,7 +578,7 @@ function getHtml(data: InitData, nonce: string): string {
   <div class="card">
     <div class="field">
       <label class="lbl">Title</label>
-      <input id="title" type="text" placeholder="display name (optional)" />
+      <input id="title" type="text" placeholder="display label (optional; safe to rename anytime)" />
     </div>
     <div class="field">
       <label class="lbl">Agent</label>

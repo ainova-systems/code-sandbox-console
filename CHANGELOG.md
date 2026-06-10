@@ -15,7 +15,9 @@ From proof of concept to a managed Sandbox UI, plus the rebrand to **Sandbox Con
   per-node actions (Connect, Stop, Shell, Rebuild, Edit, Delete instance, Remove
   from config), with optional groups.
 - **New / Edit Sandbox** webview form — agent, optional title and group, secrets,
-  ports, and environment; no YAML by hand.
+  ports, and environment; no YAML by hand. The title is a pure display label
+  (sandbox keys derive from the agent), so renaming never touches instances or
+  images.
 - Committed `.sandbox/config.yaml` recipe holding the shared project `name` and
   sandbox definitions (FR-009).
 - Custom environments per sandbox: the agent's default image, a custom Dockerfile

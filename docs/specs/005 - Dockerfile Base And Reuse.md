@@ -16,6 +16,8 @@ Local `.vsix` testing surfaced two FR-008 gaps:
 - The generated Dockerfile was always named `<key>.Dockerfile`, so two sandboxes could
   not share one environment definition: there was no way to point a second (e.g.
   temporary) sandbox at an already-committed Dockerfile.
+- The sandbox **key** was seeded from a slug of the title, entangling a display label
+  with technical identity (sbx name, file names, image tags).
 
 ## What changed
 
@@ -31,6 +33,10 @@ Local `.vsix` testing surfaced two FR-008 gaps:
   committed Dockerfile — and, via the derived tag, the image built from it.
 - The typed name is validated like recipe keys (no path separators, no leading dot) —
   an untrusted value must never steer the write target outside `.sandbox/`.
+- **Title decoupled from naming.** New-sandbox keys now derive from the **agent id**
+  (`claude`, `claude-2`, …), not from a slug of the title: the title is a pure display
+  label (Explorer, status bar) that can be renamed at any time without touching the sbx
+  name, generated file names, or image tags.
 
 ## Decisions
 
@@ -40,6 +46,10 @@ Local `.vsix` testing surfaced two FR-008 gaps:
 - An unchanged dockerfile name on an edit round-trip is accepted as-is (including
   hand-authored subfolder paths in `config.yaml`) — validation applies only to new or
   changed names, so existing recipes keep working.
+- Everything user-visible is renameable; everything technical is stable: `title` is
+  display-only, while the key (locked after creation) anchors the sbx name, the default
+  Dockerfile name, and derived tags. Existing recipes keep their title-derived keys —
+  keys are persisted, never re-derived.
 - Derived image tags are `<project>:<dockerfile stem>` (e.g. `claude.Dockerfile` →
   `myproj:claude`), not `<project>-<key>:latest`: the image is a product of the
   Dockerfile, so sandboxes sharing the file share the image and one Rebuild refreshes

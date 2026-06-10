@@ -209,8 +209,9 @@ only; kit injection (`sbx kit add`) is the natural follow-up for live environmen
 
 **Instance-first New/Edit (the user edits a sandbox, not a file).** The Explorer drives a
 webview: **New Sandbox** (`sandboxConsole.newSandbox`, the `+` in the view title) creates
-one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display name;
-for New it also derives the sandbox key/name), **Agent**, **Group** (organises the tree
+one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display label
+only — the key derives from the agent id, so a rename never touches names/images),
+**Agent**, **Group** (organises the tree
 into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
 **Advanced** (Environment: Default / Custom Dockerfile / Custom image; published ports as
 add/remove rows; `direct | clone` mount). The Dockerfile choice takes an optional **file
@@ -362,9 +363,11 @@ config** (destroys any live instance first, then drops the entry from `config.ya
 deleting the file if it was the last). A malformed `config.yaml` renders as a single
 error node that opens the file — never as an empty "No sandboxes yet" tree.
 
-**Title & Group (organising).** A spec may carry `title` (Explorer label; for New it also
-seeds the sandbox key/name) and `group` (folders the tree). Groups are organisational
-today and the natural hook for per-group governance (`sbx --profile`) later.
+**Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
+display-only, **never** part of the key, sbx name, file names, or image tags, so it is
+safe to rename at any time) and `group` (folders the tree). New-sandbox keys derive from
+the agent id (`claude`, `claude-2`, …). Groups are organisational today and the natural
+hook for per-group governance (`sbx --profile`) later.
 
 **Status bar & the active sandbox (FR-050).** The status bar item shows the *active*
 sandbox by display name (`title || key`) with its state icon; the agent is in the
