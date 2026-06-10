@@ -42,7 +42,10 @@ probing. "Build is green" = `tsc --noEmit` clean AND `npm run build` succeeds.
 
 - Everything goes through the `sbx` CLI. `src/sbx.ts` shapes all child-process sbx
   invocations; `src/terminal.ts` additionally builds the interactive `sbx run`/`exec`
-  shellArgs for native terminals. Keep CLI strings in those two modules only.
+  shellArgs for native terminals. Keep CLI strings in those two modules only — with
+  one carve-out: the bash template in `src/script.ts` *renders* sbx calls into the
+  generated `.sandbox/scripts/sbx.sh` (FR-052) for external shells; the extension
+  never executes them, but keep the template in sync when CLI shapes change.
 - **`sbx` is not on PATH** (Windows): it lives at
   `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`. `sbxPath()` resolves it; that same path
   is used as the terminal `shellPath`.
@@ -73,13 +76,17 @@ recipe parse/write incl. project `name` — FR-009), `identity.ts` (`.sandbox/id
 `{id}` — local random suffix), `sbx.ts`
 (CLI wrapper: lifecycle + `template load`/`secret set`/discovery + `hostToSandboxPath`),
 `images.ts` (custom-image build → save → `template load`, FR-008), `secrets.ts` (provision
-missing secrets, FR-032), `sandbox.ts` (recipe→refs + naming + lifecycle), `ops.ts`
+missing secrets via cached-entry picker/prompt, FR-032+FR-051), `blobs.ts` (per-project
+secret cache: DPAPI blobs in `~/.sbx`, shared with the generated CLI — FR-051),
+`script.ts` (generated project CLI `.sandbox/scripts/sbx.sh`, FR-052 — written, never
+executed by the extension), `sandbox.ts` (recipe→refs + naming + lifecycle), `ops.ts`
 (per-sandbox create/attach/rebuild/shell shared by palette + Explorer), `terminal.ts`
 (native terminals driving sbx), `form.ts` (webview Configure form), `tree.ts` (Sandbox
 Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
-Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, sbx}`;
+Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx}`;
 `ops → {images, secrets, sandbox, terminal, sbx}`;
 `tree → {ops, form, sandbox, config, identity, agents, sbx}`;
+`secrets → {blobs, sandbox, services, sbx}`; `script → config`;
 `sandbox → {config, identity, sbx}`; nothing depends on `extension`.
 
 ## Binding UX invariants (not preferences)
