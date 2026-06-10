@@ -13,6 +13,7 @@ import { ensureIdentity } from "./identity";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
+import { ensureProjectScript } from "./script";
 import * as secrets from "./secrets";
 
 /**
@@ -140,7 +141,10 @@ export async function openForm(
         }
         saving = true;
         try {
-          await apply(root, mode, msg.payload, current, customServices, pinned);
+          const version =
+            (context.extension.packageJSON as { version?: string }).version ??
+            "0.0.0";
+          await apply(root, mode, msg.payload, current, customServices, pinned, version);
           panel.dispose();
           await vscode.commands
             .executeCommand("sandboxConsole.refresh")
@@ -171,7 +175,8 @@ async function apply(
   payload: SubmitPayload,
   oldSpec: SandboxSpec | undefined,
   renderedServices: string[],
-  pinned: { key?: string }
+  pinned: { key?: string },
+  version: string
 ): Promise<void> {
   const identity = await ensureIdentity(root);
   let existing: SandboxConfig | undefined;
@@ -289,6 +294,8 @@ async function apply(
     sandboxes,
   });
   pinned.key = key; // a later create/build failure must not re-append on retry
+  // FR-052: the recipe just changed/appeared — make sure the project CLI exists too.
+  await ensureProjectScript(root, version).catch(() => undefined);
 
   if (mode.kind === "new") {
     if (generatedDockerfile) {

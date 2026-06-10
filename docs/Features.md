@@ -446,6 +446,26 @@ by hand (see Architecture §8).
 
 ---
 
+## FR-051 Per-Project Secret Cache
+
+The extension shall cache secret values per project, so a fine-grained (repo-scoped)
+token is entered **once** and reused for every new sandbox and runner of that project —
+without making it global to all projects (see Architecture §8).
+
+* Cached values live in `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted for the
+  current OS user (Windows DPAPI; other platforms currently degrade to no-cache).
+  The same files are read by the generated project CLI (FR-052) — one store for UI
+  and shell automation, plus a `GITHUB_SANDBOX_PAT`-style env fallback for CI.
+* Provisioning (FR-032) becomes **pick-or-enter**: a Quick Pick over cached entry
+  *names* for the service (current project first; values are never displayed) plus
+  *Enter new value…*. A new value can be cached as the project entry, under another
+  name (e.g. `shared`), or used once. With an empty cache the picker is skipped.
+* `Sandbox: Manage Cached Secrets` lists, renames, and deletes entries (names only).
+* FR-032 invariants are unchanged: values move only over stdin/stdout pipes — never
+  argv, env vars, the repo, or an image.
+
+---
+
 # 9. Workspace Integration
 
 ## FR-040 Automatic Workspace Mount
@@ -539,12 +559,13 @@ indicator is not implemented.
 Palette commands (category **Sandbox**):
 
 ```text
-Connect         — create-or-attach the active sandbox; Start/Attach folded in (sbx run resumes)
+Connect               — create-or-attach the active sandbox; Start/Attach folded in (sbx run resumes)
 Stop
 Shell
 Rebuild
-Switch Sandbox  — pick the active sandbox from the recipe list (FR-050)
-New Sandbox     — the agent is picked in the form; no per-agent Open commands
+Switch Sandbox        — pick the active sandbox from the recipe list (FR-050)
+New Sandbox           — the agent is picked in the form; no per-agent Open commands
+Manage Cached Secrets — list/rename/delete per-project cached secret entries (FR-051)
 Refresh
 ```
 
@@ -552,6 +573,27 @@ Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
 `Rebuild`, `Edit`, `Delete instance`, `Remove from config`.
 
 There is no separate Start/Restart/Delete palette command.
+
+---
+
+## FR-052 Generated Project CLI
+
+The extension shall generate a committed bash script, `.sandbox/scripts/sbx.sh`, that
+exposes the same sandbox model to shells and AI skills (CLI automation), so they call
+subcommands instead of re-encoding naming/lifecycle/secret rules as prose
+(see Architecture §13).
+
+* Subcommands: `name`, `status`, `connect`, `stop`, `rm`, `rebuild`, `exec`, `task`
+  (headless `claude -p`, foreground/background/cost-reporting), `runner-create` /
+  `runner-rm` / `runners` (ephemeral clone-mode runners off the `default: true` entry,
+  named `<name>-<key>-<id>-p<slug>`, guarded removal), `secret-github` (the FR-051
+  chain), `version`.
+* The script derives everything at run time from the recipe and identity files — it
+  contains no secrets and no project-specific values, and is regenerated only on
+  extension upgrades (version + content hash in the header; manual edits are never
+  overwritten silently).
+* The extension **never executes** the generated script — generation is one-way
+  (a committed script is repo-controlled input).
 
 ---
 

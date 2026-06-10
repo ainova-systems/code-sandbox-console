@@ -82,6 +82,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "sandboxConsole.manageSecrets",
+        "title": "Manage Cached Secrets",
+        "category": "Sandbox"
+      },
+      {
         "command": "sandboxConsole.refresh",
         "title": "Refresh",
         "category": "Sandbox",
