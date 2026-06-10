@@ -55,7 +55,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerExplorer(context);
   void refreshStatus();
   // FR-002: discover on workspace open and offer the resume-first action.
-  void discoverAndOffer(context);
+  void discoverAndOffer();
 }
 
 export function deactivate(): void {
@@ -398,9 +398,11 @@ async function refreshStatus(): Promise<void> {
 
 /**
  * Features §3 + "Attach before Create": on open, surface the resume-first action that matches
- * the discovered state. No implicit Claude — offers New Sandbox when nothing is defined.
+ * the discovered state — but only for repos that opted into sandboxes (a committed
+ * recipe with entries). A repo without a recipe gets NO startup notification: the
+ * status bar `+ New Sandbox` and the Sandboxes view are the quiet entry points.
  */
-async function discoverAndOffer(context: vscode.ExtensionContext): Promise<void> {
+async function discoverAndOffer(): Promise<void> {
   const root = sandbox.workspaceRoot();
   if (!root || !(await sbx.available())) {
     return;
@@ -412,21 +414,7 @@ async function discoverAndOffer(context: vscode.ExtensionContext): Promise<void>
     return; // malformed — don't nag on startup
   }
   if (!config || config.sandboxes.length === 0) {
-    // No committed recipe: offer at most once per workspace so fresh repos are not
-    // nagged on every window open. (A committed config is an opt-in — keep offering.)
-    if (context.workspaceState.get<boolean>("sandboxConsole.offeredCreate")) {
-      return;
-    }
-    await context.workspaceState.update("sandboxConsole.offeredCreate", true);
-    if (
-      (await vscode.window.showInformationMessage(
-        "No sandboxes for this repo.",
-        "New Sandbox"
-      )) === "New Sandbox"
-    ) {
-      await vscode.commands.executeCommand("sandboxConsole.newSandbox");
-    }
-    return;
+    return; // no recipe — stay quiet (status bar / Explorer offer New Sandbox)
   }
   const primary = primarySpecOf(config);
   const name = `${primary.title || primary.key} (${agentLabel(primary.agent)})`;

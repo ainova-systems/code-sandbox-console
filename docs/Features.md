@@ -45,13 +45,15 @@ lifecycle management.
 
 ## First-Time Project
 
-When a project has no sandbox:
+When a project has no sandbox, the extension stays **quiet** — no startup notification.
+The entry points are passive:
 
 ```text
-No sandboxes for this repo.
-
-[ New Sandbox ]
+status bar:        + New Sandbox
+Sandboxes view:    No sandboxes yet for this repo.  [ New Sandbox ]
 ```
+
+(`Connect`/`Shell` palette commands route to the form too.)
 
 User selects an agent (and optional environment) in the New Sandbox form.
 
@@ -187,8 +189,10 @@ Possible outcomes:
 * Sandbox exists and stopped
 * Sandbox exists and failed
 
-Discovery is silent when the `sbx` CLI is not installed; a repo with no recipe is
-offered the New Sandbox form at most once per workspace.
+Discovery is silent when the `sbx` CLI is not installed, and silent for a repo with no
+recipe (no startup notification — the status bar `+ New Sandbox` and the Sandboxes view
+are the entry points). The startup resume-first offer appears only for repos with a
+committed recipe.
 
 ---
 

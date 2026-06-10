@@ -110,10 +110,12 @@ The UI labels the attach action **Connect** (the underlying sbx operation is sti
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
 first, then choosing the create form (`… <agent> <path>`) or the attach form (`… <name>`).
 
-There is **no implicit default sandbox**: with no `.sandbox/config.yaml`, the UI offers
-the **New Sandbox** form (once per workspace on startup); `Connect`/`Shell` route there
-too. A malformed `config.yaml` is surfaced as an error pointing at the file — it is never
-treated as "no sandboxes" and never silently overwritten.
+There is **no implicit default sandbox**: with no `.sandbox/config.yaml`, startup stays
+**quiet** (no notification) — the status bar shows `+ New Sandbox`, the Sandboxes view
+offers the form, and `Connect`/`Shell` route there too. The startup resume-first offer
+appears only for repos with a committed recipe. A malformed `config.yaml` is surfaced
+as an error pointing at the file — it is never treated as "no sandboxes" and never
+silently overwritten.
 
 ## 6. Configuration recipe & identity
 
