@@ -42,7 +42,10 @@ probing. "Build is green" = `tsc --noEmit` clean AND `npm run build` succeeds.
 
 - Everything goes through the `sbx` CLI. `src/sbx.ts` shapes all child-process sbx
   invocations; `src/terminal.ts` additionally builds the interactive `sbx run`/`exec`
-  shellArgs for native terminals. Keep CLI strings in those two modules only.
+  shellArgs for native terminals. Keep CLI strings in those two modules only — with
+  one carve-out: the bash template in `src/script.ts` *renders* sbx calls into the
+  generated `.sandbox/scripts/sbx.sh` (FR-052) for external shells; the extension
+  never executes them, but keep the template in sync when CLI shapes change.
 - **`sbx` is not on PATH** (Windows): it lives at
   `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`. `sbxPath()` resolves it; that same path
   is used as the terminal `shellPath`.

@@ -92,7 +92,10 @@ Nothing depends on `extension`; `config`, `agents`, `services`, and `blobs` are 
 
 `sbx.ts` shapes all child-process `sbx` invocations; `terminal.ts` additionally builds
 the interactive `run`/`exec` argument vectors used as terminal `shellArgs` — CLI strings
-live in those two modules only.
+the **extension executes** live in those two modules only. The one carve-out is the
+bash template in `script.ts`, which *renders* sbx calls into the generated
+`.sandbox/scripts/sbx.sh` (§13) for external shells — never executed by the extension;
+it must be kept in sync with `sbx.ts`/`ops.ts` when CLI shapes change.
 
 ## 5. Lifecycle & command mapping
 

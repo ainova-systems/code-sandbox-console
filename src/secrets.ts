@@ -154,12 +154,12 @@ async function promptAndOfferCache(
       const typed = await vscode.window.showInputBox({
         title: "Cache entry name",
         value: projectEntry,
-        prompt: 'Letters, digits and "._-" (e.g. the project, or "shared" for a cross-project fallback)',
+        prompt: 'Letters, digits and "._+-" (e.g. the project, or "shared" for a cross-project fallback)',
         ignoreFocusOut: true,
         validateInput: (v) =>
-          /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)
+          blobs.validEntryName(v)
             ? undefined
-            : 'use letters, digits and "._-", starting with a letter or digit',
+            : 'use letters, digits and "._+-", starting with a letter or digit',
       });
       if (!typed) {
         return value; // caching declined — the value itself is still good
@@ -203,7 +203,9 @@ export async function manageCachedSecrets(): Promise<void> {
       entries.map((e) => ({
         label: `$(key) ${e.entry}`,
         description: e.service,
-        detail: e.file,
+        // Stable hint only — the real absolute path would leak the local username
+        // into screenshots, and entry+service already identify the blob.
+        detail: `~/.sbx/${e.entry}.${e.service}.dpapi`,
         blob: e,
       })),
       { title: "Cached secrets (~/.sbx, encrypted per OS user)", ignoreFocusOut: true }
@@ -237,9 +239,9 @@ export async function manageCachedSecrets(): Promise<void> {
       value: picked.blob.entry,
       ignoreFocusOut: true,
       validateInput: (v) =>
-        /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)
+        blobs.validEntryName(v)
           ? undefined
-          : 'use letters, digits and "._-", starting with a letter or digit',
+          : 'use letters, digits and "._+-", starting with a letter or digit',
     });
     if (newName && newName !== picked.blob.entry) {
       await blobs.renameBlob(picked.blob.entry, picked.blob.service, newName);

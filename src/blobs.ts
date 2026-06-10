@@ -26,25 +26,39 @@ export interface BlobEntry {
 
 const SUFFIX = ".dpapi";
 
-/** Entry/service names become file-name components — same shape as recipe keys. */
-const ENTRY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * Entry/service names become file-name components. The set must be a superset of what
+ * sandbox-name sanitising can produce (incl. "+"), or project-derived entries written
+ * by the extension could not be addressed again — or found by the generated CLI.
+ */
+const ENTRY_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+/** UI-side validation hook (input boxes) — the same rule assertEntryName() enforces. */
+export function validEntryName(name: string): boolean {
+  return ENTRY_RE.test(name);
+}
 
 export function assertEntryName(name: string): string {
   if (!ENTRY_RE.test(name)) {
     throw new Error(
-      `invalid cache entry name "${name}" (use letters, digits and "._-", starting with a letter or digit)`
+      `invalid cache entry name "${name}" (use letters, digits and "._+-", starting with a letter or digit)`
     );
   }
   return name;
 }
 
-/** Mirror sandbox.ts sanitize(): make an arbitrary label usable as an entry name. */
+/**
+ * EXACT mirror of sandbox.ts sanitize() (and the generated CLI's sanitize()) — the
+ * script resolves the project blob as `sanitize(project_name)`, so any divergence
+ * (e.g. "_" kept vs dashed, "+" dropped) would make the extension cache under a name
+ * the shell chain never looks up.
+ */
 export function entrySafe(label: string): string {
   const safe = label
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/[^A-Za-z0-9.+-]+/g, "-")
     .replace(/^[^A-Za-z0-9]+/, "")
     .replace(/-+$/, "");
-  return safe || "project";
+  return safe || "sandbox";
 }
 
 export function cacheSupported(): boolean {
@@ -88,6 +102,11 @@ export async function listEntries(service?: string): Promise<BlobEntry[]> {
     const entry = stem.slice(0, dot);
     const svc = stem.slice(dot + 1);
     if (service && svc !== service) {
+      continue;
+    }
+    // Skip foreign/legacy files that read/delete/rename could not address again — a
+    // listed entry must always round-trip through blobFile()'s validation.
+    if (!ENTRY_RE.test(entry) || !ENTRY_RE.test(svc)) {
       continue;
     }
     out.push({ entry, service: svc, file: path.join(blobDir(), n) });
