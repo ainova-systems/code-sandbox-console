@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { agentLabel } from "./agents";
 import {
   CONFIG_DIR,
+  CONFIG_FILE,
   readConfig,
   SandboxConfig,
   SandboxSpec,
@@ -56,12 +57,19 @@ export async function openForm(
   root: vscode.Uri,
   mode: FormMode
 ): Promise<void> {
-  const [agentIds, serviceIds, secretList, config] = await Promise.all([
+  const [agentIds, serviceIds, secretList] = await Promise.all([
     sbx.listAgents(),
     sbx.listSecretServices(),
     sbx.listSecrets(),
-    readConfig(root).catch(() => undefined),
   ]);
+  let config: SandboxConfig | undefined;
+  try {
+    config = await readConfig(root); // undefined when absent
+  } catch (err) {
+    // Malformed recipe (FR-009): refuse the form — Save must never replace the file.
+    await showInvalidConfig(root, err);
+    return;
+  }
   const globals = [
     ...new Set(
       secretList.filter((s) => s.scope === "global").map((s) => s.service)
@@ -107,33 +115,47 @@ export async function openForm(
     "sandboxConsoleForm",
     mode.kind === "edit" ? "Edit Sandbox" : "New Sandbox",
     vscode.ViewColumn.Active,
-    { enableScripts: true }
+    // retainContextWhenHidden: typed input must survive a tab switch (the form is small).
+    { enableScripts: true, retainContextWhenHidden: true }
   );
   panel.webview.html = getHtml(data, randomBytes(16).toString("base64"));
 
-  panel.webview.onDidReceiveMessage(
+  let saving = false; // double-submit guard: Save can block for minutes (image pull/build)
+  const pinned: { key?: string } = {}; // key persisted by a partial save — see apply()
+  const receiver = panel.webview.onDidReceiveMessage(
     async (msg: { type?: string; payload?: SubmitPayload }) => {
       if (msg?.type === "cancel") {
         panel.dispose();
         return;
       }
       if (msg?.type === "submit" && msg.payload) {
+        if (saving) {
+          return; // a save is already in flight — ignore the re-entry
+        }
+        saving = true;
         try {
-          await apply(root, mode, msg.payload, current);
+          await apply(root, mode, msg.payload, current, customServices, pinned);
           panel.dispose();
           await vscode.commands
             .executeCommand("sandboxConsole.refresh")
             .then(undefined, () => undefined);
         } catch (err) {
-          vscode.window.showErrorMessage(
-            `Sandbox: ${err instanceof Error ? err.message : String(err)}`
-          );
+          if (!(err instanceof HandledError)) {
+            vscode.window.showErrorMessage(
+              `Sandbox Console: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          }
+        } finally {
+          saving = false;
         }
       }
-    },
-    undefined,
-    context.subscriptions
+    }
   );
+  // The handler dies with its panel — collecting it in context.subscriptions instead
+  // would leak one closure per opened form for the whole session.
+  panel.onDidDispose(() => receiver.dispose(), undefined, context.subscriptions);
 }
 
 /** Persist the spec to config.yaml and apply it to the instance. */
@@ -141,27 +163,44 @@ async function apply(
   root: vscode.Uri,
   mode: FormMode,
   payload: SubmitPayload,
-  oldSpec: SandboxSpec | undefined
+  oldSpec: SandboxSpec | undefined,
+  renderedServices: string[],
+  pinned: { key?: string }
 ): Promise<void> {
   const identity = await ensureIdentity(root);
-  const config: SandboxConfig = (await readConfig(root).catch(() => undefined)) ?? {
-    version: 1,
-    sandboxes: [],
-  };
+  let existing: SandboxConfig | undefined;
+  try {
+    existing = await readConfig(root); // undefined when absent
+  } catch (err) {
+    // Malformed recipe (FR-009): refuse to save — never silently replace the file.
+    void showInvalidConfig(root, err);
+    throw new HandledError("invalid config");
+  }
+  const config: SandboxConfig = existing ?? { version: 1, sandboxes: [] };
   const projectName = config.name ?? folderName(root);
+  if (mode.kind === "edit") {
+    // The panel can sit open for a while — prefer the freshly-read spec over the
+    // snapshot taken when the form opened (another save may have landed since).
+    oldSpec = config.sandboxes.find((s) => s.key === mode.key) ?? oldSpec;
+  }
 
   let key: string;
   let agent: string;
   if (mode.kind === "edit") {
     key = mode.key;
     agent = oldSpec?.agent ?? payload.agent;
+  } else if (pinned.key && config.sandboxes.some((s) => s.key === pinned.key)) {
+    // Retry after a failed create: the entry is already persisted — update it
+    // in place instead of appending a duplicate "<key>-2".
+    key = pinned.key;
+    agent = payload.agent;
   } else {
     agent = payload.agent;
     const slug = payload.title
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9.+-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+      .replace(/[^a-z0-9.-]+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "");
     const base = slug || agent;
     key = base;
     const used = new Set(config.sandboxes.map((s) => s.key));
@@ -174,11 +213,26 @@ async function apply(
   let dockerfile: string | undefined;
   let generatedDockerfile: string | undefined;
   if (payload.env === "dockerfile") {
-    image = `${projectName.toLowerCase()}-${key}:latest`;
-    dockerfile = `${key}.Dockerfile`;
-    const madeUri = await ensureDockerfile(root, key);
-    if (madeUri) {
-      generatedDockerfile = `${key}.Dockerfile`;
+    if (oldSpec?.dockerfile) {
+      // Edit round-trip: a hand-authored dockerfile path + image tag survive as-is.
+      dockerfile = oldSpec.dockerfile;
+      image = oldSpec.image;
+    } else {
+      image = `${tagSafe(projectName)}-${tagSafe(key)}:latest`;
+      dockerfile = `${key}.Dockerfile`;
+    }
+    if (dockerfile === `${key}.Dockerfile`) {
+      // The key names a file under .sandbox/ — an untrusted recipe key must never
+      // steer the write target (path traversal).
+      if (!KEY_RE.test(key)) {
+        throw new Error(
+          `sandbox key "${key}" cannot name a Dockerfile — keys must start with a letter or digit and use only letters, digits, "._-" (rename it in .sandbox/config.yaml first).`
+        );
+      }
+      const madeUri = await ensureDockerfile(root, key);
+      if (madeUri) {
+        generatedDockerfile = dockerfile;
+      }
     }
   } else if (payload.env === "image") {
     if (!payload.image) {
@@ -187,7 +241,16 @@ async function apply(
     image = payload.image;
   }
 
+  // FR-032: the committed secrets list is the recipe's requirement. Global secrets on
+  // THIS machine only affect prompting, so requirements the form did not render
+  // (globally satisfied here, or unknown services) must survive a save round-trip.
+  const carried = (oldSpec?.secrets ?? []).filter(
+    (s) => !renderedServices.includes(s)
+  );
+  const specSecrets = [...new Set([...(payload.secrets ?? []), ...carried])];
+
   const spec: SandboxSpec = {
+    ...oldSpec, // fields the form does not edit (e.g. `context`) survive an edit
     key,
     agent,
     title: payload.title.trim() || undefined,
@@ -195,9 +258,13 @@ async function apply(
     image,
     dockerfile,
     mount: payload.mount === "clone" ? "clone" : "direct",
-    secrets: payload.secrets ?? [],
+    secrets: specSecrets,
     ports: payload.ports ?? [],
   };
+
+  // Derive (and validate) the sbx ref BEFORE persisting: a name that cannot pass the
+  // argv allowlists must fail the save, not poison the committed recipe.
+  const ref = sandbox.ref(projectName, spec, identity.id);
 
   const exists = config.sandboxes.some((s) => s.key === key);
   const sandboxes = exists
@@ -208,13 +275,12 @@ async function apply(
     name: projectName,
     sandboxes,
   });
-
-  const ref = sandbox.ref(projectName, spec, identity.id);
+  pinned.key = key; // a later create/build failure must not re-append on retry
 
   if (mode.kind === "new") {
     if (generatedDockerfile) {
       info(
-        `Saved. Edit .sandbox/${generatedDockerfile} (set FROM + tools), then Attach the sandbox to build it.`
+        `Saved. Edit .sandbox/${generatedDockerfile} (set FROM + tools), then Connect the sandbox to build it.`
       );
     } else {
       // createOrAttach builds the image, prompts secrets, attaches, and publishes ports.
@@ -226,7 +292,7 @@ async function apply(
   // edit
   const state = await safeState(ref);
   if (state === "absent") {
-    info("Saved. Create it from the Sandboxes view (Attach).");
+    info("Saved. Create it from the Sandboxes view (Connect).");
     return;
   }
   const envChanged =
@@ -258,6 +324,46 @@ async function apply(
 
 function info(message: string): void {
   vscode.window.showInformationMessage(message);
+}
+
+/** Thrown after the user was already shown a notification (the panel stays open). */
+class HandledError extends Error {}
+
+/** Recipe keys name files (`.sandbox/<key>.Dockerfile`) and docker-tag components.
+ * No path separators and no leading "." — that is what makes traversal impossible;
+ * uppercase/underscore are fine (the derived image tag is tagSafe()d separately). */
+const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * One component of a derived docker image tag. Docker repository names need [a-z0-9]
+ * runs joined by single separators; project/folder names often aren't (spaces, "+", …):
+ * lowercase, dash invalid runs, collapse/trim separators, never return empty.
+ */
+function tagSafe(part: string): string {
+  const safe = part
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[._-]{2,}/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  return safe || "sandbox";
+}
+
+/** Malformed `.sandbox/config.yaml`: explain + offer to open it; never overwrite it.
+ * Shared with extension.ts so palette commands tell the same story as the form. */
+export async function showInvalidConfig(
+  root: vscode.Uri,
+  err: unknown
+): Promise<void> {
+  const msg = err instanceof Error ? err.message : String(err);
+  const choice = await vscode.window.showErrorMessage(
+    `Sandbox Console: ${msg} — fix the file, then retry.`,
+    "Open config"
+  );
+  if (choice === "Open config") {
+    await vscode.window.showTextDocument(
+      vscode.Uri.joinPath(root, CONFIG_DIR, CONFIG_FILE)
+    );
+  }
 }
 
 async function safeState(ref: sandbox.SandboxRef): Promise<sbx.SandboxState> {
@@ -483,7 +589,7 @@ function getHtml(data: InitData, nonce: string): string {
         <label class="inline"><input type="radio" name="env" value="default" /> Default agent image</label>
         <label class="inline"><input type="radio" name="env" value="dockerfile" /> Custom: Dockerfile</label>
         <label class="inline"><input type="radio" name="env" value="image" /> Custom: image (pull as-is)</label>
-        <div id="dockerHint" class="hint" style="display:none">A <code>.sandbox/&lt;agent&gt;.Dockerfile</code> is created (FROM the shell base; all bases listed in comments). Edit it, then Rebuild/Attach to build.</div>
+        <div id="dockerHint" class="hint" style="display:none">A <code>.sandbox/&lt;name&gt;.Dockerfile</code> is created, named after this sandbox (FROM the shell base; all bases listed in comments). Edit it, then Rebuild/Connect to build.</div>
         <div id="imageBlock" class="custom" style="display:none">
           <label class="lbl">Image reference (pulled as-is)</label>
           <input id="image" type="text" placeholder="e.g. docker/sandbox-templates:shell-docker or ghcr.io/org/img:tag" />

@@ -1,0 +1,18 @@
+# Normalize line endings: the repo is uniformly LF; keep it that way for all
+# contributors regardless of their local core.autocrlf setting.
+* text=auto
+
+*.ts   text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+LICENSE        text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+.vscodeignore  text eol=lf
+
+*.png  binary
+*.vsix binary

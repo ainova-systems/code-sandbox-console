@@ -76,6 +76,7 @@ export async function ensureImageForRef(
  * Create-or-attach a specific sandbox (FR-003/005). When the recipe needs a custom image
  * or secrets, builds the image and provisions secrets first (creating the sandbox
  * non-attaching so per-sandbox secrets apply); otherwise the verified one-shot `sbx run`.
+ * Attaching to an existing sandbox re-prompts for any still-missing secrets (FR-032).
  * Configured ports are published once the sandbox comes up.
  */
 export async function createOrAttach(
@@ -87,6 +88,7 @@ export async function createOrAttach(
     if (!workspace) {
       throw new Error("No workspace open.");
     }
+    sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
     await ensureImageForRef(ref, root.fsPath);
     if (ref.spec.secrets.length > 0) {
       await sandbox.create(ref, workspace); // exists before per-sandbox secret set
@@ -96,6 +98,12 @@ export async function createOrAttach(
       openAgentCreate(ref, workspace);
     }
   } else {
+    if (ref.spec.secrets.length > 0) {
+      // Re-check declared secrets on every attach (FR-032): a cancelled prompt or a
+      // secret deleted via the CLI would otherwise stay missing forever. Prompts only
+      // for missing ones — a cheap no-op when everything is provisioned.
+      await secrets.ensureSecrets(ref);
+    }
     openAgentAttach(ref);
   }
   void publishPortsWhenReady(ref.name, ref.spec.ports);
@@ -136,6 +144,7 @@ export async function rebuildRef(
   if (!workspace) {
     throw new Error("No workspace open.");
   }
+  sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
   if (ref.spec.secrets.length > 0) {
     await sandbox.create(ref, workspace);
     await secrets.ensureSecrets(ref);
@@ -146,7 +155,11 @@ export async function rebuildRef(
   void publishPortsWhenReady(ref.name, ref.spec.ports);
 }
 
-/** Open a shell in a specific sandbox at the workspace (creates it first if absent). */
+/**
+ * Open a shell in a specific sandbox at the workspace. Creates it first if absent,
+ * mirroring createOrAttach: declared secrets are provisioned (FR-032) and configured
+ * ports are published once the sandbox comes up.
+ */
 export async function shellRef(
   root: vscode.Uri,
   ref: sandbox.SandboxRef
@@ -155,9 +168,16 @@ export async function shellRef(
   if (!workspace) {
     throw new Error("No workspace open.");
   }
+  // Translate before any sbx mutation: throws a friendly error for UNC/WSL paths.
+  const workspaceInside = sbx.hostToSandboxPath(workspace);
   if ((await sandbox.state(ref)) === "absent") {
     await ensureImageForRef(ref, root.fsPath);
     await sandbox.create(ref, workspace);
   }
-  openShell(ref, sbx.hostToSandboxPath(workspace));
+  if (ref.spec.secrets.length > 0) {
+    // Same FR-032 re-check as createOrAttach: prompts only for missing secrets.
+    await secrets.ensureSecrets(ref);
+  }
+  openShell(ref, workspaceInside);
+  void publishPortsWhenReady(ref.name, ref.spec.ports);
 }

@@ -24,8 +24,6 @@ export const AGENTS: Record<string, AgentDef> = {
   shell: { id: "shell", label: "Shell" },
 };
 
-export const DEFAULT_AGENT = AGENTS.claude;
-
 /** Resolve a label for any agent id (known table entry, else title-cased id). */
 export function agentLabel(id: string): string {
   const known = AGENTS[id];

@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import { DEFAULT_AGENT } from "./agents";
 import { readConfig, SandboxSpec } from "./config";
 import { SandboxIdentity } from "./identity";
 import * as sbx from "./sbx";
@@ -18,8 +17,17 @@ export interface SandboxRef {
   projectName: string;
 }
 
+/**
+ * Make a name part valid for sbx: each disallowed run becomes "-", the part must start
+ * with a letter/digit (sbx + argv safety), and a part with nothing usable left (e.g. a
+ * fully non-ASCII folder name) falls back to "sandbox" — mirroring form.ts tagSafe().
+ */
 function sanitize(part: string): string {
-  return part.replace(/[^A-Za-z0-9.+-]/g, "-");
+  const safe = part
+    .replace(/[^A-Za-z0-9.+-]+/g, "-")
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(/-+$/, "");
+  return safe || "sandbox";
 }
 
 function folderName(root: vscode.Uri): string {
@@ -31,7 +39,12 @@ export function sandboxName(
   key: string,
   id: string
 ): string {
-  return `${sanitize(projectName)}-${sanitize(key)}-${id}`;
+  // sanitize() guarantees valid, non-empty parts; the composed name still passes the
+  // argv-boundary assert (FR-009 values land in sbx argv, also via terminal shellArgs)
+  // as a backstop against regressions in either side.
+  return sbx.assertSandboxName(
+    `${sanitize(projectName)}-${sanitize(key)}-${id}`
+  );
 }
 
 export function ref(
@@ -39,38 +52,34 @@ export function ref(
   spec: SandboxSpec,
   id: string
 ): SandboxRef {
+  // Validate config-derived argv values at derivation too — terminal.ts builds
+  // `sbx run --name <name> [-t <image>] <agent> ...` straight from this ref.
+  sbx.assertAgentId(spec.agent);
+  if (spec.image) {
+    sbx.assertImageTag(spec.image);
+  }
   return { spec, projectName, name: sandboxName(projectName, spec.key, id) };
 }
 
-/** The implicit recipe when `.sandbox/config.yaml` is absent: a single Claude sandbox. */
-export function defaultSpec(): SandboxSpec {
-  return {
-    key: DEFAULT_AGENT.id,
-    agent: DEFAULT_AGENT.id,
-    mount: "direct",
-    secrets: [],
-    ports: [],
-  };
-}
-
-/** Every sandbox declared for this repo (the recipe, or the default single Claude). */
+/** Every sandbox declared for this repo (empty when there's no `.sandbox/config.yaml`). */
 export async function refs(
   root: vscode.Uri,
   identity: SandboxIdentity
 ): Promise<SandboxRef[]> {
   const config = await readConfig(root);
-  const projectName = config?.name ?? folderName(root);
-  const specs = config?.sandboxes ?? [defaultSpec()];
-  return specs.map((spec) => ref(projectName, spec, identity.id));
+  if (!config) {
+    return []; // no recipe → no sandboxes (UI offers "New Sandbox"); no implicit default
+  }
+  const projectName = config.name ?? folderName(root);
+  return config.sandboxes.map((spec) => ref(projectName, spec, identity.id));
 }
 
-/** The primary sandbox for the single-action commands (first recipe entry / default). */
+/** The primary sandbox (first recipe entry), or undefined when none is defined yet. */
 export async function primaryRef(
   root: vscode.Uri,
   identity: SandboxIdentity
-): Promise<SandboxRef> {
-  const all = await refs(root, identity);
-  return all[0]!; // refs() always yields at least the default
+): Promise<SandboxRef | undefined> {
+  return (await refs(root, identity))[0];
 }
 
 export function state(sandbox: SandboxRef): Promise<sbx.SandboxState> {

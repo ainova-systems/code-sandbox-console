@@ -6,9 +6,10 @@ VS Code. It feels like a native terminal while execution happens in a microVM; y
 manage containers, images, or sandbox lifecycle by hand.
 
 The extension is a thin orchestration layer over the `sbx` CLI; it does not manage
-containers itself. Per-repo isolation with host-side credential proxying means one client's
-secrets and data never leak into another's environment — and the agent runs in a microVM,
-not on your host.
+containers itself. Credentials can be scoped **per sandbox** via host-side proxying, so one
+project's secrets need never be exposed to another's environment (globally-scoped
+credentials are deliberately shared across all sandboxes) — and the agent runs in a
+microVM, not on your host.
 
 ## Features
 
@@ -30,9 +31,28 @@ not on your host.
 
 ## Requirements
 
+- VS Code **1.90+**.
 - [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`) installed and signed in
   (`sbx login`).
 - Docker (host) — only needed to build **custom Dockerfile** images.
+
+**Platform support:** developed and verified on **Windows** (the `sbx` executable is
+resolved from `%LOCALAPPDATA%\DockerSandboxes\bin`). macOS/Linux are **untested**: the
+extension falls back to `sbx` on PATH and passes POSIX workspace paths through unchanged,
+so they are expected to work — reports welcome.
+
+## Install
+
+Not yet published to the VS Code Marketplace. Install from a `.vsix`:
+
+```sh
+npm install
+npm run package        # produces sandbox-console-<version>.vsix
+code --install-extension sandbox-console-<version>.vsix
+```
+
+Or run it from source: open this folder in VS Code and press **F5** (Extension
+Development Host).
 
 ## Configuration
 
@@ -61,13 +81,16 @@ sandboxes:
 
 - `npm install`
 - `npm run build` — bundle to `dist/extension.js` (esbuild).
+- `npm run watch` — rebuild on change.
 - `npx tsc --noEmit` — strict typecheck (the real correctness gate).
+- `npm run package` — produce a `.vsix` (vsce).
 - Press **F5** to launch the Extension Development Host.
 
 ## Documentation
 
-- [Functional Requirements (FRD)](docs/FRD.md)
-- [Architecture & decisions](docs/ARCHITECTURE.md)
+- [Features](docs/Features.md) — the functional truth (`FR-0xx` requirement IDs)
+- [Architecture](docs/Architecture.md) — the technical truth (design & decisions)
+- [Iteration specs](docs/specs/) — append-only history of substantial changes
 - Upstream: [Docker Sandboxes docs](https://docs.docker.com/ai/sandboxes/)
 
 ## Built AI-first

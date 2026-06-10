@@ -1,14 +1,19 @@
 import * as vscode from "vscode";
 import { agentLabel } from "./agents";
-import { removeFromConfig } from "./config";
+import {
+  CONFIG_DIR,
+  CONFIG_FILE,
+  readConfig,
+  removeFromConfig,
+} from "./config";
 import { openForm } from "./form";
-import { readIdentity } from "./identity";
+import { ensureIdentity, readIdentity } from "./identity";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 
 /**
- * Sandbox Explorer (FRD §10) — a tree of THIS repo's sandbox instances with live status.
+ * Sandbox Explorer (Features §10) — a tree of THIS repo's sandbox instances with live status.
  * Optionally grouped (spec.group) into folders. Node label = spec.title || key. Per-node
  * actions reuse ops.ts so the Explorer and palette commands never drift.
  */
@@ -34,8 +39,8 @@ class SandboxNode extends vscode.TreeItem {
         ? "circle-outline"
         : "add"
     );
-    // No single-click action — clicking only selects; use the inline buttons (Attach to
-    // open the agent, New Terminal for a shell). VS Code has no separate double-click event.
+    // No single-click action — clicking only selects; use the inline buttons (Connect to
+    // open the agent, Shell for a terminal). VS Code has no separate double-click event.
   }
 }
 
@@ -48,11 +53,38 @@ class GroupNode extends vscode.TreeItem {
   }
 }
 
-type Node = GroupNode | SandboxNode;
+/**
+ * Single node shown when `.sandbox/config.yaml` exists but is malformed — an empty tree
+ * would misleadingly render the "No sandboxes yet" welcome. Click opens the file; no
+ * popup spam on every refresh.
+ */
+class ConfigErrorNode extends vscode.TreeItem {
+  constructor(root: vscode.Uri, err: unknown) {
+    const raw = err instanceof Error ? err.message : String(err);
+    // readConfig() already prefixes the file path — redundant next to our label.
+    const msg = raw.replace(/^\.sandbox\/config\.yaml:\s*/, "");
+    super(
+      `config.yaml is invalid: ${msg}`,
+      vscode.TreeItemCollapsibleState.None
+    );
+    this.tooltip = `${CONFIG_DIR}/${CONFIG_FILE}: ${msg}`;
+    this.contextValue = "configError";
+    this.iconPath = new vscode.ThemeIcon("error");
+    this.command = {
+      command: "vscode.open",
+      title: "Open config.yaml",
+      arguments: [vscode.Uri.joinPath(root, CONFIG_DIR, CONFIG_FILE)],
+    };
+  }
+}
+
+type Node = GroupNode | SandboxNode | ConfigErrorNode;
 
 interface Loaded {
   groups: Map<string, SandboxNode[]>;
   ungrouped: SandboxNode[];
+  /** Set when config.yaml is malformed — rendered as the only (root) node. */
+  error?: ConfigErrorNode;
 }
 
 class SandboxExplorer implements vscode.TreeDataProvider<Node> {
@@ -76,8 +108,11 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
     if (element instanceof GroupNode) {
       return loaded.groups.get(element.group) ?? [];
     }
-    if (element instanceof SandboxNode) {
+    if (element instanceof SandboxNode || element instanceof ConfigErrorNode) {
       return [];
+    }
+    if (loaded.error) {
+      return [loaded.error];
     }
     const groupNodes: Node[] = [...loaded.groups.entries()].map(
       ([group, nodes]) => new GroupNode(group, nodes.length)
@@ -105,14 +140,32 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
     if (!root || !(await sbx.available())) {
       return this.store(result, gen);
     }
-    const identity = await readIdentity(root);
-    if (!identity) {
-      return this.store(result, gen); // viewsWelcome offers "New sandbox"
+    let config;
+    try {
+      config = await readConfig(root);
+    } catch (err) {
+      // Malformed config (FR-009): render one error node, not an empty tree — the
+      // viewsWelcome would misleadingly claim "No sandboxes yet for this repo."
+      result.error = new ConfigErrorNode(root, err);
+      return this.store(result, gen);
+    }
+    if (!config) {
+      return this.store(result, gen); // no recipe → empty → viewsWelcome "New Sandbox"
+    }
+    let identity;
+    try {
+      identity = await ensureIdentity(root);
+    } catch {
+      // Can't write .sandbox/identity.yaml (read-only checkout?) — render the welcome
+      // instead of rejecting every getChildren(); New Sandbox surfaces the real error.
+      return this.store(result, gen);
     }
     let refs: sandbox.SandboxRef[];
     try {
       refs = await sandbox.refs(root, identity);
-    } catch {
+    } catch (err) {
+      // refs() re-reads the config, so this is the same malformed-config case.
+      result.error = new ConfigErrorNode(root, err);
       return this.store(result, gen);
     }
     // One `sbx ls` for the whole tree (not one per node).
@@ -167,10 +220,10 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
       let ref = node?.ref;
       if (!ref) {
         const identity = await readIdentity(root);
-        if (!identity) {
-          return;
-        }
-        ref = await sandbox.primaryRef(root, identity);
+        ref = identity ? await sandbox.primaryRef(root, identity) : undefined;
+      }
+      if (!ref) {
+        return;
       }
       await fn(root, ref);
       provider.refresh();
@@ -248,13 +301,13 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
             "Remove"
           );
           if (ok === "Remove") {
-            const existed = (await sandbox.state(ref)) !== "absent";
-            // Update config first so the terminal-close refresh during destroy already
-            // sees the sandbox gone (avoids a stale node lingering until the next refresh).
-            await removeFromConfig(root, ref.spec.key);
-            if (existed) {
+            // Destroy the live instance FIRST: if `sbx rm` fails, the definition must
+            // stay in config.yaml so the tree can still show and manage the sandbox
+            // (otherwise the microVM is orphaned, reachable only via raw `sbx ls`/`rm`).
+            if ((await sandbox.state(ref)) !== "absent") {
               await ops.destroyRef(ref);
             }
+            await removeFromConfig(root, ref.spec.key);
           }
         })
     ),
