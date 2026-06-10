@@ -39,9 +39,9 @@ From proof of concept to a managed Sandbox UI, plus the rebrand to **Sandbox Con
 
 - Rebranded from the *Ainoflow Sandbox Terminal* POC to **Sandbox Console**
   (publisher `Ainova Systems`); commands now live under `sandboxConsole.*`.
-- Repos without a sandbox recipe get no startup notification anymore — the
-  status bar `+ New Sandbox` and the Sandboxes view are the quiet entry points;
-  the startup Connect offer appears only for repos with a committed recipe.
+- Startup is now completely quiet — opening a workspace never raises
+  notifications. Discovery feeds the status bar (live state, `+ New Sandbox`
+  with no recipe) and the Sandboxes view; Connect is one click away in either.
 - `.sandbox/identity.yaml` simplified to a short random `{id}`; the sbx sandbox
   name is `<name>-<key>-<id>`, keeping clones/copies/worktrees conflict-free.
 

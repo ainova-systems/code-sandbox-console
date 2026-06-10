@@ -70,20 +70,13 @@ and recorded in the committed recipe (FR-009).
 
 ## Returning Project
 
-When a sandbox already exists:
+When a sandbox already exists, its state is surfaced **passively** — startup never
+raises notifications. The status bar shows the active sandbox with its live state,
+one click from Connect:
 
 ```text
-Sandbox Backend (Claude) found · running
-
-[ Connect ]
-```
-
-or
-
-```text
-Sandbox Backend (Claude) found · stopped
-
-[ Connect ]
+status bar:        ● Backend   (running)   /   ○ Backend   (stopped)
+Sandboxes view:    per-sandbox state + Connect
 ```
 
 The default action must always be resume. (**Connect** is the UI label for the attach
@@ -189,10 +182,10 @@ Possible outcomes:
 * Sandbox exists and stopped
 * Sandbox exists and failed
 
-Discovery is silent when the `sbx` CLI is not installed, and silent for a repo with no
-recipe (no startup notification — the status bar `+ New Sandbox` and the Sandboxes view
-are the entry points). The startup resume-first offer appears only for repos with a
-committed recipe.
+Discovery is **always silent**: opening a workspace never raises notifications. Its
+results surface passively in the status bar item (state icon + display name; `+ New
+Sandbox` when nothing is defined) and the Sandboxes view — Connect is one click away
+in either place.
 
 ---
 
