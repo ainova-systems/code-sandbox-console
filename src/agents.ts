@@ -32,3 +32,16 @@ export function agentLabel(id: string): string {
   }
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
+
+/**
+ * `docker/sandbox-templates` tag for an agent's base image. Template flavors mostly
+ * match agent ids (claude → claude-code, cursor → cursor-agent are the exceptions);
+ * the CLI boots the `-docker` variants by default, so a custom Dockerfile that starts
+ * from one keeps the same baseline. Unknown agents (custom kits) fall back to shell.
+ * Flavor list: https://docs.docker.com/ai/sandboxes/customize/templates/
+ */
+export function agentTemplate(id: string): string {
+  const variant =
+    id === "claude" ? "claude-code" : id === "cursor" ? "cursor-agent" : id;
+  return `${AGENTS[id] ? variant : "shell"}-docker`;
+}

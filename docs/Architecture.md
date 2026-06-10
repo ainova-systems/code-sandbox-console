@@ -185,7 +185,7 @@ complementary mechanisms (see the `customize/` docs linked at the top of this fi
 **Templates — baked image (the `image` + `dockerfile` path).** Verified end-to-end:
 
 ```text
-docker build -t <image> -f .sandbox/<key>.Dockerfile <context>   # FROM an agent base image
+docker build -t <image> -f .sandbox/<dockerfile> <context>   # FROM an agent base image
 docker save <image> -o <tar>                               # host docker store ≠ sbx store
 sbx template load <tar>                                     # into the sbx runtime image store
 sbx create -t <image> <agent> <workspace>                  # custom rootfs, agent preserved
@@ -209,18 +209,28 @@ only; kit injection (`sbx kit add`) is the natural follow-up for live environmen
 
 **Instance-first New/Edit (the user edits a sandbox, not a file).** The Explorer drives a
 webview: **New Sandbox** (`sandboxConsole.newSandbox`, the `+` in the view title) creates
-one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display name;
-for New it also derives the sandbox key/name), **Agent**, **Group** (organises the tree
+one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display label
+only — the key derives from the agent id, so a rename never touches names/images),
+**Agent**, **Group** (organises the tree
 into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
 **Advanced** (Environment: Default / Custom Dockerfile / Custom image; published ports as
-add/remove rows; `direct | clone` mount). Agent/secret lists come from the installed sbx
-(static fallback), so the form tracks the local version.
+add/remove rows; `direct | clone` mount). The Dockerfile choice takes an optional **file
+name** under `.sandbox/` (empty → `<key>.Dockerfile`): a missing file is generated `FROM`
+the selected agent's base template (`agentTemplate()` — the `-docker` flavor the CLI
+boots by default; claude → `claude-code-docker`); an existing file is reused untouched,
+so several sandboxes can share one committed Dockerfile. The derived tag is
+`<project>:<dockerfile stem>` (e.g. `claude.Dockerfile` → `tomis-next:claude`) — the
+image is a product of the Dockerfile, so sharing the file shares the image and a
+Rebuild refreshes it for every sandbox using it. The name is held to the same
+no-separators/no-leading-dot rule as recipe keys (§9) — it must never steer the write
+target outside `.sandbox/`. Agent/secret lists come from the installed sbx (static
+fallback), so the form tracks the local version.
 
 **Save = persist + apply.** The definition is written to `.sandbox/config.yaml` AND
 applied to the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply
 **live**; image/mount changes prompt a **Rebuild** (recreate; workspace on the mount
-preserved). A just-generated Dockerfile is **not** auto-built (it carries only the
-default shell base) — the user edits it, then Rebuild/Connect builds it. An edit
+preserved). A just-generated Dockerfile is **not** auto-built (it carries only the agent
+base, no tooling yet) — the user edits it, then Rebuild/Connect builds it. An edit
 round-trip preserves fields the form does not expose (e.g. `context`), keeps the
 committed secret requirements regardless of what is satisfied on this machine, and a
 failed create retries against the same recipe entry (no duplicate keys). A malformed
@@ -353,9 +363,11 @@ config** (destroys any live instance first, then drops the entry from `config.ya
 deleting the file if it was the last). A malformed `config.yaml` renders as a single
 error node that opens the file — never as an empty "No sandboxes yet" tree.
 
-**Title & Group (organising).** A spec may carry `title` (Explorer label; for New it also
-seeds the sandbox key/name) and `group` (folders the tree). Groups are organisational
-today and the natural hook for per-group governance (`sbx --profile`) later.
+**Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
+display-only, **never** part of the key, sbx name, file names, or image tags, so it is
+safe to rename at any time) and `group` (folders the tree). New-sandbox keys derive from
+the agent id (`claude`, `claude-2`, …). Groups are organisational today and the natural
+hook for per-group governance (`sbx --profile`) later.
 
 **Status bar & the active sandbox (FR-050).** The status bar item shows the *active*
 sandbox by display name (`title || key`) with its state icon; the agent is in the

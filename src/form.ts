@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { randomBytes } from "crypto";
-import { agentLabel } from "./agents";
+import { agentLabel, agentTemplate } from "./agents";
 import {
   CONFIG_DIR,
   CONFIG_FILE,
@@ -19,7 +19,7 @@ import * as secrets from "./secrets";
  * Instance-first New/Edit panel. The user edits a SANDBOX (not a file): Save persists the
  * definition to `.sandbox/config.yaml` (invisible plumbing) AND applies to the instance —
  * secrets/ports live, image/mount via a confirmed Rebuild. A just-generated Dockerfile is
- * NOT auto-built (it would have only the default shell base); the user edits it first.
+ * NOT auto-built (it has only the agent base, no tooling yet); the user edits it first.
  */
 
 export type FormMode = { kind: "new" } | { kind: "edit"; key: string };
@@ -30,6 +30,7 @@ interface SubmitPayload {
   group: string;
   env: string; // "default" | "dockerfile" | "image"
   image: string;
+  dockerfile: string;
   secrets: string[];
   ports: number[];
   mount: string;
@@ -48,6 +49,7 @@ interface InitData {
   group: string;
   env: string;
   image: string;
+  dockerfile: string;
   secrets: string[];
   ports: number[];
   mount: string;
@@ -108,6 +110,7 @@ export async function openForm(
     group: current?.group ?? "",
     env,
     image: current && !current.dockerfile ? current.image ?? "" : "",
+    dockerfile: current?.dockerfile ?? "",
     secrets: current?.secrets ?? [],
     ports: current?.ports ?? [],
     mount: current?.mount ?? "direct",
@@ -198,17 +201,14 @@ async function apply(
     key = pinned.key;
     agent = payload.agent;
   } else {
+    // The key is the stable technical id (sbx name, file names, image tags). It is
+    // deliberately NOT derived from the title — the title is a display label the
+    // user may rename at any time without touching instances or images.
     agent = payload.agent;
-    const slug = payload.title
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9.-]+/g, "-")
-      .replace(/^[-.]+|[-.]+$/g, "");
-    const base = slug || agent;
-    key = base;
+    key = agent;
     const used = new Set(config.sandboxes.map((s) => s.key));
     for (let n = 2; used.has(key); n++) {
-      key = `${base}-${n}`;
+      key = `${agent}-${n}`;
     }
   }
 
@@ -216,23 +216,26 @@ async function apply(
   let dockerfile: string | undefined;
   let generatedDockerfile: string | undefined;
   if (payload.env === "dockerfile") {
-    if (oldSpec?.dockerfile) {
-      // Edit round-trip: a hand-authored dockerfile path + image tag survive as-is.
-      dockerfile = oldSpec.dockerfile;
+    dockerfile = payload.dockerfile.trim() || oldSpec?.dockerfile || `${key}.Dockerfile`;
+    if (dockerfile === oldSpec?.dockerfile) {
+      // Round-trip: a previously accepted file (possibly hand-authored, even in a
+      // subfolder) and the image tag the instance was built with survive as-is.
       image = oldSpec.image;
     } else {
-      image = `${tagSafe(projectName)}-${tagSafe(key)}:latest`;
-      dockerfile = `${key}.Dockerfile`;
-    }
-    if (dockerfile === `${key}.Dockerfile`) {
-      // The key names a file under .sandbox/ — an untrusted recipe key must never
-      // steer the write target (path traversal).
-      if (!KEY_RE.test(key)) {
+      // The typed/derived name becomes a file under .sandbox/ — an untrusted value
+      // must never steer the write target (path traversal).
+      if (!KEY_RE.test(dockerfile)) {
         throw new Error(
-          `sandbox key "${key}" cannot name a Dockerfile — keys must start with a letter or digit and use only letters, digits, "._-" (rename it in .sandbox/config.yaml first).`
+          `"${dockerfile}" cannot name a Dockerfile under .sandbox/ — use only letters, digits and "._-", starting with a letter or digit (no path separators).`
         );
       }
-      const madeUri = await ensureDockerfile(root, key);
+      // The image is a product of the Dockerfile, so tag it `<project>:<file stem>` —
+      // sandboxes sharing one Dockerfile share one image (Rebuild refreshes it for all).
+      const stem = dockerfile.replace(/\.?dockerfile$/i, "") || key;
+      image = `${tagSafe(projectName)}:${tagSafe(stem)}`;
+      // Existing file (e.g. shared by another sandbox) is reused as-is — only a
+      // missing one is seeded, FROM the agent's own base template.
+      const madeUri = await ensureDockerfile(root, dockerfile, agent);
       if (madeUri) {
         generatedDockerfile = dockerfile;
       }
@@ -290,7 +293,7 @@ async function apply(
   if (mode.kind === "new") {
     if (generatedDockerfile) {
       info(
-        `Saved. Edit .sandbox/${generatedDockerfile} (set FROM + tools), then Connect the sandbox to build it.`
+        `Saved. Edit .sandbox/${generatedDockerfile} (add your tooling), then Connect the sandbox to build it.`
       );
     } else {
       // createOrAttach builds the image, prompts secrets, attaches, and publishes ports.
@@ -339,9 +342,9 @@ function info(message: string): void {
 /** Thrown after the user was already shown a notification (the panel stays open). */
 class HandledError extends Error {}
 
-/** Recipe keys name files (`.sandbox/<key>.Dockerfile`) and docker-tag components.
- * No path separators and no leading "." — that is what makes traversal impossible;
- * uppercase/underscore are fine (the derived image tag is tagSafe()d separately). */
+/** Recipe keys and Dockerfile names become files under `.sandbox/` and docker-tag
+ * components. No path separators and no leading "." — that is what makes traversal
+ * impossible; uppercase/underscore are fine (image tags are tagSafe()d separately). */
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
@@ -394,12 +397,14 @@ async function publishPortsSafe(name: string, ports: number[]): Promise<void> {
   }
 }
 
-/** Generate `.sandbox/<key>.Dockerfile` with a shell-base default; undefined if it exists. */
+/** Generate `.sandbox/<file>` FROM the agent's base template; undefined if it exists
+ * (an existing file is never clobbered — that is what makes sharing one work). */
 async function ensureDockerfile(
   root: vscode.Uri,
-  key: string
+  file: string,
+  agent: string
 ): Promise<vscode.Uri | undefined> {
-  const uri = vscode.Uri.joinPath(root, CONFIG_DIR, `${key}.Dockerfile`);
+  const uri = vscode.Uri.joinPath(root, CONFIG_DIR, file);
   try {
     await vscode.workspace.fs.stat(uri);
     return undefined; // already exists — never clobber
@@ -408,16 +413,12 @@ async function ensureDockerfile(
   }
   const content =
     [
-      `# Dockerfile for the "${key}" sandbox — edit freely, then Rebuild.`,
+      `# ${file} — edit freely, then Rebuild/Connect the sandboxes that use it.`,
       "# Must extend a Docker Sandboxes base image (keeps the proxy + agent user intact).",
-      "# Available base images — set FROM to one of:",
-      "#   docker/sandbox-templates:shell         generic shell (default below)",
-      "#   docker/sandbox-templates:shell-docker  shell + Docker engine",
-      "#   docker/sandbox-templates:claude-code   Claude Code agent",
-      "#   docker/sandbox-templates:codex         Codex agent",
-      "#   docker/sandbox-templates:gemini        Gemini agent",
-      "#   (run `sbx template ls` to list what's installed locally)",
-      "FROM docker/sandbox-templates:shell",
+      `# The base below matches this sandbox's agent (${agent}); -docker flavors bundle a`,
+      "# Docker engine (the CLI default). All flavors: `sbx template ls` or",
+      "# https://docs.docker.com/ai/sandboxes/customize/templates/",
+      `FROM docker/sandbox-templates:${agentTemplate(agent)}`,
       "USER root",
       "# Install your dev tooling here, e.g.:",
       "# RUN apt-get update && apt-get install -y dotnet-sdk-8.0",
@@ -473,11 +474,12 @@ const SCRIPT = `(function(){
 
   Array.prototype.forEach.call(document.querySelectorAll('input[name=env]'), function(r){ r.checked = (r.value === I.env); });
   document.getElementById('image').value = I.image || '';
+  document.getElementById('dockerfile').value = I.dockerfile || '';
   function syncEnv(){
     var sel = document.querySelector('input[name=env]:checked');
     var v = sel ? sel.value : 'default';
     document.getElementById('imageBlock').style.display = (v === 'image') ? 'block' : 'none';
-    document.getElementById('dockerHint').style.display = (v === 'dockerfile') ? 'block' : 'none';
+    document.getElementById('dockerBlock').style.display = (v === 'dockerfile') ? 'block' : 'none';
   }
   Array.prototype.forEach.call(document.querySelectorAll('input[name=env]'), function(r){ r.addEventListener('change', syncEnv); });
   syncEnv();
@@ -508,6 +510,7 @@ const SCRIPT = `(function(){
       group: document.getElementById('group').value,
       env: env,
       image: document.getElementById('image').value.trim(),
+      dockerfile: document.getElementById('dockerfile').value.trim(),
       secrets: secrets,
       ports: ports,
       mount: document.getElementById('mount').value,
@@ -575,7 +578,7 @@ function getHtml(data: InitData, nonce: string): string {
   <div class="card">
     <div class="field">
       <label class="lbl">Title</label>
-      <input id="title" type="text" placeholder="display name (optional)" />
+      <input id="title" type="text" placeholder="display label (optional; safe to rename anytime)" />
     </div>
     <div class="field">
       <label class="lbl">Agent</label>
@@ -604,7 +607,11 @@ function getHtml(data: InitData, nonce: string): string {
         <label class="inline"><input type="radio" name="env" value="default" /> Default agent image</label>
         <label class="inline"><input type="radio" name="env" value="dockerfile" /> Custom: Dockerfile</label>
         <label class="inline"><input type="radio" name="env" value="image" /> Custom: image (pull as-is)</label>
-        <div id="dockerHint" class="hint" style="display:none">A <code>.sandbox/&lt;name&gt;.Dockerfile</code> is created, named after this sandbox (FROM the shell base; all bases listed in comments). Edit it, then Rebuild/Connect to build.</div>
+        <div id="dockerBlock" class="custom" style="display:none">
+          <label class="lbl">Dockerfile (under .sandbox/)</label>
+          <input id="dockerfile" type="text" placeholder="auto: &lt;sandbox name&gt;.Dockerfile" />
+          <div class="hint">Created if missing, FROM the selected agent's base image. Enter the same file name in several sandboxes to share one committed Dockerfile. Edit it, then Rebuild/Connect to build.</div>
+        </div>
         <div id="imageBlock" class="custom" style="display:none">
           <label class="lbl">Image reference (pulled as-is)</label>
           <input id="image" type="text" placeholder="e.g. docker/sandbox-templates:shell-docker or ghcr.io/org/img:tag" />
