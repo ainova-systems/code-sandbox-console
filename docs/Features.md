@@ -45,13 +45,15 @@ lifecycle management.
 
 ## First-Time Project
 
-When a project has no sandbox:
+When a project has no sandbox, the extension stays **quiet** — no startup notification.
+The entry points are passive:
 
 ```text
-No sandboxes for this repo.
-
-[ New Sandbox ]
+status bar:        + New Sandbox
+Sandboxes view:    No sandboxes yet for this repo.  [ New Sandbox ]
 ```
+
+(`Connect`/`Shell` palette commands route to the form too.)
 
 User selects an agent (and optional environment) in the New Sandbox form.
 
@@ -68,20 +70,13 @@ and recorded in the committed recipe (FR-009).
 
 ## Returning Project
 
-When a sandbox already exists:
+When a sandbox already exists, its state is surfaced **passively** — startup never
+raises notifications. The status bar shows the active sandbox with its live state,
+one click from Connect:
 
 ```text
-Sandbox Backend (Claude) found · running
-
-[ Connect ]
-```
-
-or
-
-```text
-Sandbox Backend (Claude) found · stopped
-
-[ Connect ]
+status bar:        ● Backend   (running)   /   ○ Backend   (stopped)
+Sandboxes view:    per-sandbox state + Connect
 ```
 
 The default action must always be resume. (**Connect** is the UI label for the attach
@@ -187,8 +182,10 @@ Possible outcomes:
 * Sandbox exists and stopped
 * Sandbox exists and failed
 
-Discovery is silent when the `sbx` CLI is not installed; a repo with no recipe is
-offered the New Sandbox form at most once per workspace.
+Discovery is **always silent**: opening a workspace never raises notifications. Its
+results surface passively in the status bar item (state icon + display name; `+ New
+Sandbox` when nothing is defined) and the Sandboxes view — Connect is one click away
+in either place.
 
 ---
 

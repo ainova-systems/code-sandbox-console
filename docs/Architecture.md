@@ -65,7 +65,7 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 
 | Module | Responsibility |
 |---|---|
-| `extension.ts` | Activation, palette commands, status bar item, startup discovery UX (Features §3, "Attach before Create"). Orchestrates the flows below. |
+| `extension.ts` | Activation, palette commands, status bar item, silent startup discovery feeding it (Features §3, "Attach before Create"). Orchestrates the flows below. |
 | `config.ts` | Parses/writes the committed `.sandbox/config.yaml` recipe, incl. the project `name` (FR-009, §6). |
 | `identity.ts` | Reads/writes the **gitignored** `.sandbox/identity.yaml` — a short random `{id}` per working copy (FR-001, §6). |
 | `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). |
@@ -116,10 +116,12 @@ The UI labels the attach action **Connect** (the underlying sbx operation is sti
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
 first, then choosing the create form (`… <agent> <path>`) or the attach form (`… <name>`).
 
-There is **no implicit default sandbox**: with no `.sandbox/config.yaml`, the UI offers
-the **New Sandbox** form (once per workspace on startup); `Connect`/`Shell` route there
-too. A malformed `config.yaml` is surfaced as an error pointing at the file — it is never
-treated as "no sandboxes" and never silently overwritten.
+There is **no implicit default sandbox**, and startup is **always quiet** — opening a
+workspace never raises notifications. Discovery feeds the status bar (state icon +
+display name; `+ New Sandbox` with no recipe) and the Sandboxes view; `Connect`/`Shell`
+route to the New Sandbox form when nothing is defined. A malformed `config.yaml` is
+surfaced as an error pointing at the file — it is never treated as "no sandboxes" and
+never silently overwritten.
 
 ## 6. Configuration recipe & identity
 

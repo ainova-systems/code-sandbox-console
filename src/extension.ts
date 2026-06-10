@@ -58,9 +58,10 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   registerExplorer(context);
+  // FR-002: startup discovery is SILENT — it only feeds the status bar and the
+  // Explorer. Opening a workspace never raises notifications; Connect lives one
+  // click away in the status bar.
   void refreshStatus();
-  // FR-002: discover on workspace open and offer the resume-first action.
-  void discoverAndOffer(context);
   // FR-052: keep the generated project CLI current for repos that use sandboxes.
   void refreshProjectScript();
 }
@@ -426,70 +427,3 @@ async function refreshStatus(): Promise<void> {
   }
 }
 
-/**
- * Features §3 + "Attach before Create": on open, surface the resume-first action that matches
- * the discovered state. No implicit Claude — offers New Sandbox when nothing is defined.
- */
-async function discoverAndOffer(context: vscode.ExtensionContext): Promise<void> {
-  const root = sandbox.workspaceRoot();
-  if (!root || !(await sbx.available())) {
-    return;
-  }
-  let config;
-  try {
-    config = await readConfig(root);
-  } catch {
-    return; // malformed — don't nag on startup
-  }
-  if (!config || config.sandboxes.length === 0) {
-    // No committed recipe: offer at most once per workspace so fresh repos are not
-    // nagged on every window open. (A committed config is an opt-in — keep offering.)
-    if (context.workspaceState.get<boolean>("sandboxConsole.offeredCreate")) {
-      return;
-    }
-    await context.workspaceState.update("sandboxConsole.offeredCreate", true);
-    if (
-      (await vscode.window.showInformationMessage(
-        "No sandboxes for this repo.",
-        "New Sandbox"
-      )) === "New Sandbox"
-    ) {
-      await vscode.commands.executeCommand("sandboxConsole.newSandbox");
-    }
-    return;
-  }
-  const primary = primarySpecOf(config);
-  const name = `${primary.title || primary.key} (${agentLabel(primary.agent)})`;
-  const identity = await readIdentity(root);
-  if (!identity) {
-    if (
-      (await vscode.window.showInformationMessage(
-        `Sandbox ${name} is not created yet`,
-        "Connect"
-      )) === "Connect"
-    ) {
-      await attach();
-    }
-    return;
-  }
-  let ref: sandbox.SandboxRef | undefined;
-  let current: sbx.SandboxState;
-  try {
-    ref = await sandbox.primaryRef(root, identity, lastKey());
-    if (!ref) {
-      return;
-    }
-    current = await sandbox.state(ref);
-  } catch {
-    return; // not signed in — don't nag on startup
-  }
-  const found =
-    current === "absent"
-      ? `Sandbox ${name} is not created yet`
-      : `Sandbox ${name} found · ${current}`;
-  if (
-    (await vscode.window.showInformationMessage(found, "Connect")) === "Connect"
-  ) {
-    await attach();
-  }
-}
