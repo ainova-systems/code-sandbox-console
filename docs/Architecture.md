@@ -384,6 +384,18 @@ config** (destroys any live instance first, then drops the entry from `config.ya
 deleting the file if it was the last). A malformed `config.yaml` renders as a single
 error node that opens the file — never as an empty "No sandboxes yet" tree.
 
+**Every slow lifecycle action surfaces a progress notification.** Create, Stop, Delete
+instance, and Recreate each run their `sbx` call (and the preceding terminal disposal,
+which can take up to ~4s) behind a non-cancellable notification spinner — the same box
+Rebuild-image already showed — so clicking any action gives instant "something is
+happening" feedback rather than a silent gap. All lifecycle ops route through `ops.ts`,
+which owns the spinners (`withProgress`), so palette, Explorer, and form callers behave
+identically. The one carve-out: interactive secret entry (FR-032) is kept **outside** the
+spinner — a progress box must never compete with a modal input — so the order is always
+*build/create behind a spinner → prompt for secrets → attach a terminal*. Terminal-based
+attach/resume (`sbx run`) and shells (`sbx exec`) need no separate spinner: the terminal
+opens immediately and is its own progress surface.
+
 **Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
 display-only, **never** part of the key, sbx name, file names, or image tags, so it is
 safe to rename at any time) and `group` (folders the tree). New-sandbox keys derive from

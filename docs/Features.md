@@ -506,6 +506,11 @@ running → Stop → Edit/Rebuild/Delete instance → Remove from config. Two de
 **Remove from config** (drops it from `config.yaml`, shown only once the instance is
 gone). See Architecture §12.
 
+Every slow lifecycle action (Create, Stop, Delete instance, Rebuild/Recreate) shows a
+progress notification while it runs — the same feedback box Rebuild-image already
+showed — so clicking an action is never a silent gap. Terminal-based Connect/Shell are
+their own feedback (the terminal opens at once). See Architecture §12.
+
 Example:
 
 ```text

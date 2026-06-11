@@ -21,6 +21,36 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Run a slow `sbx` operation behind a notification spinner so clicking any lifecycle
+ * action gives instant "something is happening" feedback (the same box Rebuild already
+ * shows). Interactive prompts (secret entry) are deliberately kept OUTSIDE these — a
+ * spinner must never fight a modal input box.
+ */
+async function withProgress<T>(
+  title: string,
+  task: () => Promise<T>
+): Promise<T> {
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title,
+      cancellable: false,
+    },
+    task
+  );
+}
+
+/** Create the sandbox (non-attaching) behind a progress spinner. */
+function createSandbox(
+  ref: sandbox.SandboxRef,
+  workspace: string
+): Promise<void> {
+  return withProgress(`Creating sandbox ${ref.name}…`, () =>
+    sandbox.create(ref, workspace)
+  );
+}
+
+/**
  * Publish the spec's ports once the sandbox is actually running (`sbx ports` needs a live
  * sandbox, and `sbx run` starts it asynchronously in a terminal). Best-effort: polls state
  * for ~30s, then publishes each port, ignoring "already bound" races. Call with `void`.
@@ -62,12 +92,8 @@ export async function ensureImageForRef(
   if (!ref.spec.image || !ref.spec.dockerfile) {
     return;
   }
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `${rebuild ? "Rebuilding" : "Building"} image ${ref.spec.image}…`,
-      cancellable: false,
-    },
+  await withProgress(
+    `${rebuild ? "Rebuilding" : "Building"} image ${ref.spec.image}…`,
     () => images.ensureImage(ref.spec, repoRoot, { rebuild })
   );
 }
@@ -91,7 +117,7 @@ export async function createOrAttach(
     sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
     await ensureImageForRef(ref, root.fsPath);
     if (ref.spec.secrets.length > 0) {
-      await sandbox.create(ref, workspace); // exists before per-sandbox secret set
+      await createSandbox(ref, workspace); // exists before per-sandbox secret set
       await secrets.ensureSecrets(ref);
       openAgentAttach(ref);
     } else {
@@ -111,21 +137,20 @@ export async function createOrAttach(
 
 /** FR-006: stop a sandbox (with progress; closes its terminals first to avoid exit popups). */
 export async function stopRef(ref: sandbox.SandboxRef): Promise<void> {
-  await disposeSandboxTerminals(ref.name);
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `Stopping ${ref.name}…`,
-      cancellable: false,
-    },
-    () => sandbox.stop(ref)
-  );
+  // Terminal disposal can take up to ~4s — keep it inside the spinner so the box appears
+  // the instant the action is clicked, not only once the CLI call starts.
+  await withProgress(`Stopping ${ref.name}…`, async () => {
+    await disposeSandboxTerminals(ref.name);
+    await sandbox.stop(ref);
+  });
 }
 
 /** Destroy a sandbox instance (state gone; recipe kept). Closes its terminals first. */
 export async function destroyRef(ref: sandbox.SandboxRef): Promise<void> {
-  await disposeSandboxTerminals(ref.name);
-  await sandbox.destroy(ref);
+  await withProgress(`Removing sandbox ${ref.name}…`, async () => {
+    await disposeSandboxTerminals(ref.name);
+    await sandbox.destroy(ref);
+  });
 }
 
 /** FR-007 Rebuild: rebuild the custom image (if any) then recreate the sandbox. */
@@ -133,12 +158,18 @@ export async function rebuildRef(
   root: vscode.Uri,
   ref: sandbox.SandboxRef
 ): Promise<void> {
-  await disposeSandboxTerminals(ref.name);
   if (ref.spec.image && ref.spec.dockerfile) {
     await ensureImageForRef(ref, root.fsPath, true);
   }
+  // Recreate (terminal close + `sbx rm`) behind one spinner; degrades to a plain Recreate
+  // when the recipe has no custom image (Architecture §11).
   if ((await sandbox.state(ref)) !== "absent") {
-    await sandbox.destroy(ref);
+    await withProgress(`Removing sandbox ${ref.name}…`, async () => {
+      await disposeSandboxTerminals(ref.name);
+      await sandbox.destroy(ref);
+    });
+  } else {
+    await disposeSandboxTerminals(ref.name);
   }
   const workspace = sandbox.workspacePath();
   if (!workspace) {
@@ -146,7 +177,7 @@ export async function rebuildRef(
   }
   sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
   if (ref.spec.secrets.length > 0) {
-    await sandbox.create(ref, workspace);
+    await createSandbox(ref, workspace);
     await secrets.ensureSecrets(ref);
     openAgentAttach(ref);
   } else {
@@ -172,7 +203,7 @@ export async function shellRef(
   const workspaceInside = sbx.hostToSandboxPath(workspace);
   if ((await sandbox.state(ref)) === "absent") {
     await ensureImageForRef(ref, root.fsPath);
-    await sandbox.create(ref, workspace);
+    await createSandbox(ref, workspace);
   }
   if (ref.spec.secrets.length > 0) {
     // Same FR-032 re-check as createOrAttach: prompts only for missing secrets.
