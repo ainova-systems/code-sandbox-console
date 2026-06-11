@@ -161,16 +161,15 @@ export async function rebuildRef(
   if (ref.spec.image && ref.spec.dockerfile) {
     await ensureImageForRef(ref, root.fsPath, true);
   }
-  // Recreate (terminal close + `sbx rm`) behind one spinner; degrades to a plain Recreate
-  // when the recipe has no custom image (Architecture §11).
-  if ((await sandbox.state(ref)) !== "absent") {
-    await withProgress(`Removing sandbox ${ref.name}…`, async () => {
-      await disposeSandboxTerminals(ref.name);
-      await sandbox.destroy(ref);
-    });
-  } else {
+  // Recreate behind one spinner: terminal close (up to ~4s) + `sbx rm` when an instance
+  // exists. Wrap the whole block — including the absent path, where only leftover or
+  // reload-restored terminals need closing — so Rebuild never reintroduces a silent gap.
+  await withProgress(`Removing sandbox ${ref.name}…`, async () => {
     await disposeSandboxTerminals(ref.name);
-  }
+    if ((await sandbox.state(ref)) !== "absent") {
+      await sandbox.destroy(ref);
+    }
+  });
   const workspace = sandbox.workspacePath();
   if (!workspace) {
     throw new Error("No workspace open.");
