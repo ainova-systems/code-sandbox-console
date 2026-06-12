@@ -50,12 +50,17 @@ export function isUnmodified(text: string): boolean {
 /**
  * Write/refresh `.sandbox/scripts/sbx.sh`. Missing → write; identical → no-op; older
  * but unmodified → silent refresh; manually edited → never clobbered silently (warn
- * with an explicit Overwrite). Runs on activation and after every form save.
+ * with an explicit Overwrite). Form save passes the default (createIfMissing) so the
+ * first sandbox seeds the script; activation passes `{ createIfMissing: false }` so
+ * merely opening a project never creates it — only an already-present script is
+ * refreshed on an upgrade (FR-002: opening a workspace writes nothing into `.sandbox/`).
  */
 export async function ensureProjectScript(
   root: vscode.Uri,
-  version: string
+  version: string,
+  options: { createIfMissing?: boolean } = {}
 ): Promise<void> {
+  const { createIfMissing = true } = options;
   const dir = vscode.Uri.joinPath(root, CONFIG_DIR, SCRIPT_DIR);
   const uri = vscode.Uri.joinPath(dir, SCRIPT_NAME);
   const desired = renderScript(version);
@@ -64,6 +69,11 @@ export async function ensureProjectScript(
     existing = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("utf8");
   } catch {
     // absent — first write
+  }
+  // Refresh-only mode (activation): never create the script just by opening a project;
+  // it is seeded when the user creates their first sandbox (form save).
+  if (existing === undefined && !createIfMissing) {
+    return;
   }
   if (existing !== undefined) {
     if (existing.replace(/\r\n/g, "\n") === desired) {

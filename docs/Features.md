@@ -182,10 +182,14 @@ Possible outcomes:
 * Sandbox exists and stopped
 * Sandbox exists and failed
 
-Discovery is **always silent**: opening a workspace never raises notifications. Its
-results surface passively in the status bar item (state icon + display name; `+ New
-Sandbox` when nothing is defined) and the Sandboxes view — Connect is one click away
-in either place.
+Discovery is **always silent and read-only**: opening a workspace never raises
+notifications and **never writes into `.sandbox/`**. Its results surface passively in
+the status bar item (state icon + display name; `+ New Sandbox` when nothing is defined)
+and the Sandboxes view — Connect is one click away in either place. The local
+`identity.yaml`, the `.gitignore`, and the generated `sbx.sh` are created only when the
+user creates their first sandbox (New Sandbox save, or Connect/Shell on a recipe entry),
+not by merely opening a project — so a repo whose `config.yaml` is committed by the team
+stays clean for anyone who only wants to read it (FR-001 generates the id on first use).
 
 ---
 
@@ -593,7 +597,9 @@ subcommands instead of re-encoding naming/lifecycle/secret rules as prose
 * The script derives everything at run time from the recipe and identity files — it
   contains no secrets and no project-specific values, and is regenerated only on
   extension upgrades (version + content hash in the header; manual edits are never
-  overwritten silently).
+  overwritten silently). It is **seeded when the first sandbox is created** (form save),
+  not by opening a project: activation only refreshes an already-present script, so a
+  passive open never adds it (FR-002).
 * The extension **never executes** the generated script — generation is one-way
   (a committed script is repo-controlled input).
 

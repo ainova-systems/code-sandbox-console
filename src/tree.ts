@@ -5,6 +5,7 @@ import {
   CONFIG_FILE,
   readConfig,
   removeFromConfig,
+  SandboxSpec,
 } from "./config";
 import { openForm } from "./form";
 import { ensureIdentity, readIdentity } from "./identity";
@@ -22,15 +23,18 @@ const VIEW_ID = "sandboxConsoleExplorer";
 
 class SandboxNode extends vscode.TreeItem {
   constructor(
-    public readonly ref: sandbox.SandboxRef,
-    public readonly state: sbx.SandboxState
+    public readonly spec: SandboxSpec,
+    public readonly state: sbx.SandboxState,
+    // The concrete sbx ref, present ONLY once a local identity exists. Before the first
+    // create the tree lists the recipe read-only (no identity written), so the ref is
+    // absent and withNode() resolves it lazily — see registerExplorer().
+    public readonly ref?: sandbox.SandboxRef
   ) {
-    super(
-      ref.spec.title || ref.spec.key,
-      vscode.TreeItemCollapsibleState.None
-    );
-    this.description = `${agentLabel(ref.spec.agent)} · ${state}`;
-    this.tooltip = `${ref.name} — ${state}`;
+    super(spec.title || spec.key, vscode.TreeItemCollapsibleState.None);
+    this.description = `${agentLabel(spec.agent)} · ${state}`;
+    this.tooltip = ref
+      ? `${ref.name} — ${state}`
+      : `${spec.title || spec.key} — not created`;
     this.contextValue = `sandbox.${state}`;
     this.iconPath = new vscode.ThemeIcon(
       state === "running"
@@ -41,6 +45,10 @@ class SandboxNode extends vscode.TreeItem {
     );
     // No single-click action — clicking only selects; use the inline buttons (Connect to
     // open the agent, Shell for a terminal). VS Code has no separate double-click event.
+  }
+
+  get key(): string {
+    return this.spec.key;
   }
 }
 
@@ -152,36 +160,59 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
     if (!config) {
       return this.store(result, gen); // no recipe → empty → viewsWelcome "New Sandbox"
     }
-    let identity;
-    try {
-      identity = await ensureIdentity(root);
-    } catch {
-      // Can't write .sandbox/identity.yaml (read-only checkout?) — render the welcome
-      // instead of rejecting every getChildren(); New Sandbox surfaces the real error.
-      return this.store(result, gen);
+    // Discovery is read-only (FR-002): list the recipe WITHOUT writing into `.sandbox/`.
+    // Read the identity but never create it — before the first create there is none, and
+    // without one no instance for this working copy can exist, so every sandbox is
+    // necessarily absent. The identity (and the rest of `.sandbox/`) is written only when
+    // the user actually creates one — see withNode().
+    const identity = await readIdentity(root);
+    let refs: sandbox.SandboxRef[] = [];
+    if (identity) {
+      try {
+        refs = await sandbox.refs(root, identity);
+      } catch (err) {
+        // refs() re-reads the config, so this is the same malformed-config case.
+        result.error = new ConfigErrorNode(root, err);
+        return this.store(result, gen);
+      }
+    } else {
+      // No identity → refs() is skipped, but it is what normally validates the recipe's
+      // argv-bound fields; without this an invalid `config.yaml` would look valid until
+      // the first action. Validate here (no identity needed) so the error surfaces now.
+      try {
+        sandbox.assertSpecsValid(config.sandboxes);
+      } catch (err) {
+        result.error = new ConfigErrorNode(root, err);
+        return this.store(result, gen);
+      }
     }
-    let refs: sandbox.SandboxRef[];
-    try {
-      refs = await sandbox.refs(root, identity);
-    } catch (err) {
-      // refs() re-reads the config, so this is the same malformed-config case.
-      result.error = new ConfigErrorNode(root, err);
-      return this.store(result, gen);
-    }
-    // One `sbx ls` for the whole tree (not one per node).
+    // One `sbx ls` for the whole tree (not one per node); skip it when nothing can exist
+    // yet (no identity → all absent).
     let infos: sbx.SandboxInfo[] = [];
-    try {
-      infos = await sbx.list();
-    } catch {
-      // not signed in / CLI error — treat all as absent
+    if (identity) {
+      try {
+        infos = await sbx.list();
+      } catch {
+        // not signed in / CLI error — treat all as absent
+      }
     }
     const status = new Map(infos.map((i) => [i.name, i.status]));
-    for (const ref of refs) {
-      const s = status.get(ref.name);
-      const state: sbx.SandboxState =
-        s === undefined ? "absent" : s === "running" ? "running" : "stopped";
-      const node = new SandboxNode(ref, state);
-      const group = ref.spec.group;
+    type Entry = {
+      spec: SandboxSpec;
+      ref?: sandbox.SandboxRef;
+      state: sbx.SandboxState;
+    };
+    const entries: Entry[] = identity
+      ? refs.map((ref) => {
+          const s = status.get(ref.name);
+          const state: sbx.SandboxState =
+            s === undefined ? "absent" : s === "running" ? "running" : "stopped";
+          return { spec: ref.spec, ref, state };
+        })
+      : config.sandboxes.map((spec) => ({ spec, state: "absent" as const }));
+    for (const entry of entries) {
+      const node = new SandboxNode(entry.spec, entry.state, entry.ref);
+      const group = entry.spec.group;
       if (group) {
         if (!groups.has(group)) {
           groups.set(group, []);
@@ -219,8 +250,17 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
     try {
       let ref = node?.ref;
       if (!ref) {
-        const identity = await readIdentity(root);
-        ref = identity ? await sandbox.primaryRef(root, identity) : undefined;
+        if (node) {
+          // The tree listed this sandbox before any identity existed. Creating one now is
+          // correct: this helper backs create/connect/shell actions, so the user IS
+          // creating/connecting their first sandbox — exactly when `.sandbox/` is seeded.
+          const identity = await ensureIdentity(root);
+          ref = await sandbox.primaryRef(root, identity, node.key);
+        } else {
+          // Defensive: a command fired without a node — resolve read-only, never write.
+          const identity = await readIdentity(root);
+          ref = identity ? await sandbox.primaryRef(root, identity) : undefined;
+        }
       }
       if (!ref) {
         return;
@@ -228,6 +268,29 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
       await fn(root, ref);
       provider.refresh();
       // sbx state can lag the command (e.g. stop takes a moment) — re-check shortly after.
+      setTimeout(() => provider.refresh(), 2500);
+    } catch (err) {
+      reportError(action, err);
+    }
+  }
+
+  // Recipe-only actions (Edit, Remove from config) operate on the node's spec/key and must
+  // NOT create an identity — the user is editing/removing a definition, not creating or
+  // connecting a sandbox (spec 009: write `.sandbox/` only on first create). Remove still
+  // destroys a live instance, but only via an already-resolved ref (present iff an identity
+  // existed at render); with no identity none can exist, so there is nothing to destroy.
+  async function withRecipeNode(
+    node: SandboxNode | undefined,
+    action: string,
+    fn: (root: vscode.Uri, node: SandboxNode) => Promise<void>
+  ): Promise<void> {
+    const root = sandbox.workspaceRoot();
+    if (!root || !node) {
+      return;
+    }
+    try {
+      await fn(root, node);
+      provider.refresh();
       setTimeout(() => provider.refresh(), 2500);
     } catch (err) {
       reportError(action, err);
@@ -273,8 +336,8 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "sandboxConsole.item.edit",
       (node?: SandboxNode) =>
-        withNode(node, "edit", async (root, ref) => {
-          await openForm(context, root, { kind: "edit", key: ref.spec.key });
+        withRecipeNode(node, "edit", async (root, n) => {
+          await openForm(context, root, { kind: "edit", key: n.key });
         })
     ),
     vscode.commands.registerCommand(
@@ -294,9 +357,9 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "sandboxConsole.item.remove",
       (node?: SandboxNode) =>
-        withNode(node, "remove", async (root, ref) => {
+        withRecipeNode(node, "remove", async (root, n) => {
           const ok = await vscode.window.showWarningMessage(
-            `Remove "${ref.spec.title || ref.spec.key}" from .sandbox/config.yaml? This deletes the definition and destroys its instance + state.`,
+            `Remove "${n.spec.title || n.spec.key}" from .sandbox/config.yaml? This deletes the definition and destroys its instance + state.`,
             { modal: true },
             "Remove"
           );
@@ -304,10 +367,11 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
             // Destroy the live instance FIRST: if `sbx rm` fails, the definition must
             // stay in config.yaml so the tree can still show and manage the sandbox
             // (otherwise the microVM is orphaned, reachable only via raw `sbx ls`/`rm`).
-            if ((await sandbox.state(ref)) !== "absent") {
-              await ops.destroyRef(ref);
+            // No identity (n.ref undefined) → no instance can exist → nothing to destroy.
+            if (n.ref && (await sandbox.state(n.ref)) !== "absent") {
+              await ops.destroyRef(n.ref);
             }
-            await removeFromConfig(root, ref.spec.key);
+            await removeFromConfig(root, n.key);
           }
         })
     ),
