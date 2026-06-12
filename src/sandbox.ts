@@ -47,6 +47,26 @@ export function sandboxName(
   );
 }
 
+/** The argv-bound recipe fields (agent, image) ref() validates before composing a name —
+ * factored out so read-only discovery can validate WITHOUT an identity (assertSpecsValid)
+ * and stay in lockstep with ref(). Throws the same errors. */
+function assertSpec(spec: SandboxSpec): void {
+  sbx.assertAgentId(spec.agent);
+  if (spec.image) {
+    sbx.assertImageTag(spec.image);
+  }
+}
+
+/**
+ * Validate every spec's argv-bound fields without needing an identity. The Explorer uses
+ * this on the no-identity path (where refs() — which validates as a side effect — is
+ * skipped) so a malformed `config.yaml` still surfaces before anything is created. Throws
+ * on the first invalid spec.
+ */
+export function assertSpecsValid(specs: SandboxSpec[]): void {
+  specs.forEach(assertSpec);
+}
+
 export function ref(
   projectName: string,
   spec: SandboxSpec,
@@ -54,10 +74,7 @@ export function ref(
 ): SandboxRef {
   // Validate config-derived argv values at derivation too — terminal.ts builds
   // `sbx run --name <name> [-t <image>] <agent> ...` straight from this ref.
-  sbx.assertAgentId(spec.agent);
-  if (spec.image) {
-    sbx.assertImageTag(spec.image);
-  }
+  assertSpec(spec);
   return { spec, projectName, name: sandboxName(projectName, spec.key, id) };
 }
 

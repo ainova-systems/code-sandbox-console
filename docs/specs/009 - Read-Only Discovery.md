@@ -35,11 +35,22 @@ observe, never mutate.** Files belong to the moment the user creates their first
   rendered **absent** (icon `add`, tooltip *"`<title/key>` — not created"*) and the
   `sbx ls` probe is skipped entirely. No `.sandbox/` write happens on render, focus
   change, or terminal open/close.
-- **Node actions resolve identity lazily.** A `SandboxNode` now carries its `spec` and an
-  *optional* `ref` (present only when an identity already existed at render time).
-  `withNode()` resolves a missing ref via `ensureIdentity` + `primaryRef(…, node.key)` at
-  the moment the user clicks Connect/Shell/etc. — so `identity.yaml` (and the rest of
-  `.sandbox/`) is written on the first create, exactly when it should be.
+- **Node actions resolve identity lazily — and only the create/connect ones.** A
+  `SandboxNode` now carries its `spec` and an *optional* `ref` (present only when an
+  identity already existed at render time). The create/connect actions (Connect, Shell,
+  Stop, Rebuild, Delete instance) go through `withNode()`, which resolves a missing ref
+  via `ensureIdentity` + `primaryRef(…, node.key)` at click time — so `identity.yaml`
+  (and the rest of `.sandbox/`) is written on the first create, exactly when it should be.
+  The **recipe-only** actions (Edit, Remove from config) go through a separate
+  `withRecipeNode()` that operates on `node.key`/`node.spec` and **never** creates an
+  identity — editing or removing a definition is not "first use". Remove still destroys a
+  live instance, but only via an already-resolved `node.ref`; with no identity none can
+  exist, so there is nothing to destroy.
+- **Validation survives the no-identity path.** `refs()` validates the recipe's
+  argv-bound fields (`assertAgentId`/`assertImageTag`) as a side effect, and it is skipped
+  when no identity exists. Those checks are factored into `sandbox.assertSpecsValid()` and
+  run on the no-identity branch too, so a malformed `config.yaml` still renders as a single
+  `ConfigErrorNode` immediately rather than looking valid until the first action.
 - **The project CLI is refreshed, not created, on activation.** `ensureProjectScript`
   takes `{ createIfMissing }` (default `true`, used by form save so the first sandbox
   seeds the script). Activation passes `createIfMissing: false`: an already-present
