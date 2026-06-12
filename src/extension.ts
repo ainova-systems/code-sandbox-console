@@ -83,9 +83,11 @@ function fail(action: string, err: unknown): void {
 }
 
 /**
- * FR-052: write/refresh `.sandbox/scripts/sbx.sh` on activation — only for repos that
- * already opted into sandboxes (a recipe with entries exists). Generation is one-way:
- * the extension writes the script but never executes it.
+ * FR-052: refresh `.sandbox/scripts/sbx.sh` on activation — only for repos that already
+ * opted into sandboxes (a recipe with entries exists) AND already have the script. It is
+ * never created merely by opening a project (`createIfMissing: false`) — the first
+ * sandbox seeds it (FR-002: opening a workspace writes nothing into `.sandbox/`).
+ * Generation is one-way: the extension writes the script but never executes it.
  */
 async function refreshProjectScript(): Promise<void> {
   const root = sandbox.workspaceRoot();
@@ -99,7 +101,7 @@ async function refreshProjectScript(): Promise<void> {
     }
     const version =
       (extCtx.extension.packageJSON as { version?: string }).version ?? "0.0.0";
-    await ensureProjectScript(root, version);
+    await ensureProjectScript(root, version, { createIfMissing: false });
   } catch {
     // malformed config / unwritable repo — the script is a convenience, stay quiet
   }
