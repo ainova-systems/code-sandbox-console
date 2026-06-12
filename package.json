@@ -260,7 +260,8 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package"
+    "package": "vsce package",
+    "install-extension": "vsce package -o sandbox-console.vsix && code --install-extension sandbox-console.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
