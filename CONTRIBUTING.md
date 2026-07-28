@@ -45,3 +45,24 @@ and pull requests targeting `main`.
   external shells — the extension itself never executes them; keep that template
   mirroring `sbx.ts`/`ops.ts` when CLI shapes change.
 - Keep changes minimal and focused; match the existing code style.
+
+## Branches & commits
+
+- Branching follows gitflow: `feature/<slug>`, `bugfix/<slug>`, `hotfix/<slug>`,
+  `release/<x.y.z>`. Never commit directly to `main`; every pull request targets `main`.
+- Commit messages are one meaningful English sentence with a capital first letter,
+  describing what was done — e.g. `Added secret provisioning form for sandbox
+  credentials`. No prefixes (`feat:`), no `[]` brackets. Cite `FR-0xx` IDs where relevant.
+- No identity trailers in commit messages or PR bodies (no `Co-Authored-By`, no names,
+  no e-mail addresses).
+- Before you commit, `npx tsc --noEmit` and `npm run build` must both be green.
+
+## Security
+
+Do not report security vulnerabilities in public issues or pull requests. Use the
+private reporting channel described in [SECURITY.md](SECURITY.md).
+
+## Licensing
+
+Contributions are accepted under the [MIT License](LICENSE): by opening a pull request
+you agree that your contribution is licensed under the same terms as the project.
