@@ -14,17 +14,18 @@ is simple, but a few conventions are load-bearing — please read this before op
 ## Build & check
 
 - `npm install` — dependencies.
-- `npm run build` — bundle to `dist/extension.js` (esbuild).
+- `npm run verify` — **the single verification command**: strict typecheck
+  (`tsc --noEmit`) + esbuild bundle. Esbuild bundles without type-checking, so the
+  typecheck inside `verify` is the real correctness gate. CI runs this same command.
+- `npm run build` — bundle to `dist/extension.js` (esbuild), no typecheck.
 - `npm run watch` — rebuild on change.
-- `npx tsc --noEmit` — typecheck (strict). **This is the real correctness gate** —
-  esbuild bundles without type-checking, so always run `tsc` too.
 - `npm run package` — produce a `.vsix` (vsce).
 
 Run/debug: open the folder in VS Code and press **F5** (Extension Development Host).
 
-There is no test runner yet; verification is `tsc --noEmit` + a manual run + direct
-`sbx` probing. "Build is green" = `tsc --noEmit` clean AND `npm run build` succeeds —
-CI enforces both on pushes and pull requests targeting `main`.
+There is no test runner yet; verification is `npm run verify` + a manual run + direct
+`sbx` probing. "Build is green" = `npm run verify` exits 0 — CI enforces it on pushes
+and pull requests targeting `main`.
 
 ## Pull requests
 

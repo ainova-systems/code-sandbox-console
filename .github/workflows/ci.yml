@@ -1,6 +1,7 @@
-# CI: enforce the project's real correctness gate (`npx tsc --noEmit` — esbuild
-# bundles without type-checking) plus the bundle and VSIX packaging. The build is
-# platform-neutral, so a single ubuntu-latest job is enough.
+# CI: enforce the project's single verification command (`npm run verify` =
+# strict typecheck + esbuild bundle — the same gate developers run locally)
+# plus VSIX packaging. The build is platform-neutral, so a single
+# ubuntu-latest job is enough.
 name: CI
 
 on:
@@ -23,11 +24,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck (the real correctness gate)
-        run: npx tsc --noEmit
-
-      - name: Build
-        run: npm run build
+      - name: Verify (typecheck + build)
+        run: npm run verify
 
       - name: Package VSIX
         run: npx vsce package

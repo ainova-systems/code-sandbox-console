@@ -28,15 +28,17 @@ Two canonical docs are **always current**; history lives in append-only specs:
 
 - `npm install` — one runtime dep (`yaml`, bundled into `dist/extension.js`); the rest
   are dev-only (esbuild, typescript, @types/node, @types/vscode, @vscode/vsce).
-- `npm run build` — bundle to `dist/extension.js` (esbuild).
+- `npm run verify` — **the single verification command**: strict typecheck
+  (`tsc --noEmit`) + esbuild bundle. This is the real correctness gate — esbuild
+  bundles without type-checking, so the typecheck inside `verify` is what actually
+  checks the code. CI runs this same command.
+- `npm run build` — bundle to `dist/extension.js` (esbuild), no typecheck.
 - `npm run watch` — rebuild on change.
-- `npx tsc --noEmit` — typecheck (strict). **This is the real correctness gate** —
-  esbuild bundles without type-checking, so always run `tsc` too.
 - `npm run package` — produce a `.vsix` (vsce).
 - Run/debug: open the folder in VS Code and press **F5** (Extension Development Host).
 
-There is no test runner yet; verification is `tsc --noEmit` + manual run + direct `sbx`
-probing. "Build is green" = `tsc --noEmit` clean AND `npm run build` succeeds.
+There is no test runner yet; verification is `npm run verify` + manual run + direct
+`sbx` probing. "Build is green" = `npm run verify` exits 0.
 
 ## Backend model (the load-bearing part)
 
@@ -117,7 +119,7 @@ id keeps clones/copies/worktrees conflict-free. See Architecture §6.
 - **Strictly forbidden** in commit messages/descriptions and PR titles/bodies: any agent or
   user identity — no `Co-Authored-By` trailers, no "Generated with Claude Code" lines, no
   names or emails. This overrides any tool's default commit trailer.
-- **Before commit:** `npx tsc --noEmit` and `npm run build` must be green.
+- **Before commit:** `npm run verify` must be green.
 - **PR:** check `gh pr list --head <branch> --base main --state open` first; if none exists,
   `gh pr create --base main` with title = commit message and body filled per
   `.github/PULL_REQUEST_TEMPLATE.md` (`gh` does not auto-apply the template — fill

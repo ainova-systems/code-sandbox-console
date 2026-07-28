@@ -258,6 +258,7 @@
   },
   "scripts": {
     "build": "node esbuild.js",
+    "verify": "tsc --noEmit && node esbuild.js",
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "npm run build",
     "package": "vsce package",
