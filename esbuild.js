@@ -12,7 +12,10 @@ const options = {
   target: "node18",
   // `vscode` is provided by the runtime host, never bundle it.
   external: ["vscode"],
-  sourcemap: true,
+  // Sourcemaps are a watch-mode/dev convenience only. `.vscodeignore` excludes
+  // `**/*.map` from the VSIX, so a production build must not emit a
+  // `sourceMappingURL` comment pointing at a file that never ships.
+  sourcemap: watch ? true : false,
   logLevel: "info",
 };
 

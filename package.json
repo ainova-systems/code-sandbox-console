@@ -6,7 +6,7 @@
   "publisher": "ainova-systems",
   "license": "MIT",
   "author": {
-    "name": "Dmitrij Zykovic",
+    "name": "MB Ainova Systems",
     "url": "https://www.ainovasystems.com"
   },
   "engines": {
@@ -34,6 +34,14 @@
   "bugs": {
     "url": "https://github.com/ainova-systems/code-sandbox-console/issues"
   },
+  "qna": "https://github.com/ainova-systems/code-sandbox-console/issues",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1F2430",
+    "theme": "dark"
+  },
+  "preview": true,
+  "pricing": "Free",
   "main": "./dist/extension.js",
   "capabilities": {
     "untrustedWorkspaces": {
