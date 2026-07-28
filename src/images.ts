@@ -208,6 +208,16 @@ export async function refreshForRebuild(spec: SandboxSpec): Promise<boolean> {
             t.flavor.startsWith(spec.agent)
         )
         .map((t) => `${t.repository}:${t.tag}`)
+        // A row that fails the argv allowlist (e.g. a dangling "<none>" tag) is not
+        // removable anyway — skip it instead of reporting a failed refresh.
+        .filter((tag) => {
+          try {
+            sbx.assertImageTag(tag);
+            return true;
+          } catch {
+            return false;
+          }
+        })
     );
     if (targets.size === 0) {
       return true; // nothing cached — the create pulls the current image anyway

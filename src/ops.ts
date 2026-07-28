@@ -165,15 +165,6 @@ export async function rebuildRef(
 ): Promise<void> {
   if (ref.spec.image && ref.spec.dockerfile) {
     await ensureImageForRef(ref, root.fsPath, true); // docker build --pull (FR-053)
-  } else {
-    const fresh = await withProgress(`Refreshing image for ${ref.name}…`, () =>
-      images.refreshForRebuild(ref.spec)
-    );
-    if (!fresh) {
-      void vscode.window.showWarningMessage(
-        `Could not refresh the image for ${ref.name} — rebuilding from the cached image.`
-      );
-    }
   }
   // Recreate behind one spinner: terminal close (up to ~4s) + `sbx rm` when an instance
   // exists. Wrap the whole block — including the absent path, where only leftover or
@@ -184,6 +175,18 @@ export async function rebuildRef(
       await sandbox.destroy(ref);
     }
   });
+  // FR-053: refresh AFTER the instance is gone (a template still referenced by a live
+  // instance could refuse removal) and before the create that consumes it.
+  if (!ref.spec.dockerfile) {
+    const fresh = await withProgress(`Refreshing image for ${ref.name}…`, () =>
+      images.refreshForRebuild(ref.spec)
+    );
+    if (!fresh) {
+      void vscode.window.showWarningMessage(
+        `Could not refresh the image for ${ref.name} — rebuilding from the cached image.`
+      );
+    }
+  }
   const workspace = sandbox.workspacePath();
   if (!workspace) {
     throw new Error("No workspace open.");

@@ -210,15 +210,16 @@ visible to `-t` until `template load`ed. Templates persist in the store; only `s
 clears them. **Base-image contract** (build-an-agent docs): non-root `agent` user at UID
 1000, passwordless sudo, `/home/agent/`, HTTP-proxy env forwarding — so a custom
 Dockerfile must `FROM docker/sandbox-templates:<flavor>` and wrap install steps in
-`USER root` … `USER agent`. **Rebuild** = refresh the image (FR-053) → re-run build →
-reload → recreate the sandbox (the host workspace is on the mount, so only image-baked
-tooling is refreshed, not work). The refresh is per environment kind: Dockerfile builds
-run `docker build --pull`; a pulled custom image is re-fetched via
+`USER root` … `USER agent`. **Rebuild** = re-run build → reload → recreate the sandbox,
+always from a fresh image (FR-053; the host workspace is on the mount, so only
+image-baked tooling is refreshed, not work). The refresh is per environment kind:
+Dockerfile builds run `docker build --pull`; a pulled custom image is re-fetched via
 `docker pull` → save → `template load` (best-effort — a local-only image stays cached and
 is never removed); a default agent image has its `docker/sandbox-templates` store entries
-removed so the create re-pulls (registry images by definition). `sbx` v0.31.3 offers no
-pull/update command — its cache is cleared only by `sbx reset` — so the extension owns
-this refresh.
+removed so the create re-pulls (registry images by definition; removal runs after the old
+instance is destroyed, since a template referenced by a live instance could refuse it).
+`sbx` v0.31.3 offers no pull/update command — its cache is cleared only by `sbx reset` —
+so the extension owns this refresh.
 **Never bake secrets** into a template — the docs warn `template save` captures
 manually-added secrets; use `sbx secret set`.
 
@@ -371,7 +372,7 @@ multiple shells are fine.
 | Operation | What it does | State |
 |---|---|---|
 | **Recreate** | `sbx rm --force` + recreate from the recipe | destroys sandbox state (host workspace untouched) |
-| **Rebuild image** | refresh the image (FR-053) → re-run `docker build --pull` → `template load` → recreate from the new image | refreshes image-baked tooling; workspace is on the mount, so work is safe |
+| **Rebuild image** | re-run `docker build --pull` → `template load` → remove the instance → refresh the default/pulled image (FR-053) → recreate from the fresh image | refreshes image-baked tooling; workspace is on the mount, so work is safe |
 | **Edit** | add/rotate secrets (`secret set <sandbox>`) and published ports (`sbx ports`) on a **running** sandbox | non-destructive, no recreate |
 
 `mount` (§6) selects the FS workflow (see §9): `direct` (instant edits, in-sandbox git,

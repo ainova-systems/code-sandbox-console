@@ -127,7 +127,7 @@ function body(version: string): string {
 #   connect [key]               create from the recipe if absent, then attach (sbx run)
 #   stop [key]                  stop, state preserved
 #   rm <key> --force            destroy the instance (in-sandbox state is lost)
-#   rebuild [key]               refresh image (FR-053) -> docker build --pull -> save -> sbx template load -> recreate
+#   rebuild [key]               docker build --pull -> save -> sbx template load -> rm -> refresh image (FR-053) -> recreate
 #   exec <key|runner> -- <cmd>  run a command in the workspace (-w resolved, clone-aware)
 #   task <key|runner> "<prompt>" [--bg|--json]
 #                               headless claude -p; --bg logs to /tmp, --json prints cost
@@ -286,7 +286,9 @@ build_image() { # <key> — no-op without a dockerfile
   rm -f "$tar"
 }
 
-refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtainable image
+refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtainable image.
+  # Best-effort throughout: under set -euo pipefail every step must fail soft — a
+  # refresh that cannot happen falls back to the cached image, never aborts the rebuild.
   local df img agent tar
   df=$(cfg_field "$1" dockerfile); img=$(cfg_field "$1" image)
   if [ -n "$df" ]; then return 0; fi                      # build_image pulls the base
@@ -294,8 +296,9 @@ refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtaina
     # Pull + reload; never remove — a local-only image would be unrecoverable.
     if docker pull "$img"; then
       tar=$(mktemp -t sbx-tmpl-XXXXXX)
-      docker save "$img" -o "$tar"
-      "$SBX" template load "$tar"
+      if docker save "$img" -o "$tar" && "$SBX" template load "$tar"; then :; else
+        printf 'sbx.sh: could not reload %s — rebuilding from the cached image\\n' "$img" >&2
+      fi
       rm -f "$tar"
     else
       printf 'sbx.sh: could not pull %s — rebuilding from the cached image\\n' "$img" >&2
@@ -304,7 +307,7 @@ refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtaina
   fi
   # Default agent image: drop the cached registry templates so create re-pulls.
   agent=$(cfg_field "$1" agent)
-  "$SBX" template ls | awk -v a="$agent" 'NR>1 && $1=="docker/sandbox-templates" && index($4, a)==1 {print $1 ":" $2}' | sort -u |
+  { "$SBX" template ls 2>/dev/null || true; } | awk -v a="$agent" 'NR>1 && $1=="docker/sandbox-templates" && index($4, a)==1 {print $1 ":" $2}' | sort -u |
     while read -r t; do "$SBX" template rm "$t" || true; done
 }
 
@@ -410,12 +413,12 @@ cmd_rebuild() {
   local key inst
   key=$(require_key "\${1:-}")
   inst=$(instance_name "$key")
-  refresh_image "$key"
   build_image "$key"
   if instance_exists "$inst"; then
     printf 'recreating %s (in-sandbox state is lost; the host workspace survives on direct mount)\\n' "$inst"
     "$SBX" rm --force "$inst"
   fi
+  refresh_image "$key"    # after rm: a template referenced by a live instance could refuse removal
   create_instance "$key"
   provision_recipe_secrets "$key" "$inst"
   printf 'rebuilt %s\\n' "$inst"
