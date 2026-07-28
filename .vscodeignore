@@ -9,6 +9,7 @@ tsconfig.json
 .gitignore
 .gitattributes
 .github/**
+.claude/**
 .sandbox/**
 docs/**
 CLAUDE.md

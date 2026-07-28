@@ -17,7 +17,7 @@
 
 ## How to Verify
 
-<!-- Steps a reviewer can run. Minimum: `npx tsc --noEmit` + `npm run build` green.
+<!-- Steps a reviewer can run. Minimum: `npm run verify` green.
      For behaviour changes: F5 (Extension Development Host) steps and what to expect. -->
 
 1.
