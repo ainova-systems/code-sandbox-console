@@ -124,6 +124,7 @@ in this file - when a skill and this file disagree, this file wins; fix the skil
 | `dev-review-changes` | Before committing non-trivial work; reviewing any PR diff | Agent |
 | `git-commit-push` | Every commit | Agent |
 | `git-open-pr` | Opening/updating a PR to `main` | Agent |
+| `git-merge-pr` | Merging a ready PR: gates (CI green, no unhandled comments) → squash merge → local cleanup | Agent |
 
 ### The flow of a change
 
@@ -143,12 +144,14 @@ How a work item travels from idea to `main`; each step is a skill above.
    also get manual acceptance via `ext-run-local` (the steps go into the PR's
    "How to Verify"). Then `git-commit-push`.
 5. **Merge.** `git-open-pr` opens the PR to `main` with the template filled; CI runs the
-   same `npm run verify`; the maintainer reviews and merges. After merge the spec is
+   same `npm run verify`; the maintainer reviews and approves; `git-merge-pr` runs the
+   readiness gates, squash-merges, and cleans up the branches. After merge the spec is
    immutable and the canonical docs are the current truth.
 
 Changing the layer: edit the skill's `SKILL.md` and keep this table in sync (a skill folder
 with no row here, or a row with no folder, is a defect). New repeatable procedure → new skill
-folder + row, in the same PR.
+folder + row, in the same PR. Process changes — skills, rules (this file), agent
+instructions — never get a `docs/specs/00N` entry: specs record product changes only.
 
 ## Git workflow (commits & PRs)
 
