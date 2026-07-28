@@ -125,6 +125,27 @@ in this file - when a skill and this file disagree, this file wins; fix the skil
 | `git-commit-push` | Every commit | Agent |
 | `git-open-pr` | Opening/updating a PR to `main` | Agent |
 
+### The flow of a change
+
+How a work item travels from idea to `main`; each step is a skill above.
+
+1. **Start.** A work item arrives — an issue, an observed defect, an idea. If it is
+   substantial (new FR, behaviour change, architectural shift), `spec-new-iteration`
+   drafts the next `docs/specs/00N` with `Status: planned` and the docs-sync checklist;
+   the spec's "What & why" / "What changed" ARE the plan, and open questions are settled
+   there before any code. A trivial fix (typo, comment, doc wording) skips the spec.
+2. **Implement.** `ext-add-feature`: work on a `feature/<slug>` branch off `main`, code
+   per the module map, cite FR ids, update `Features.md`/`Architecture.md` per the
+   checklist in the same change, and end with `npm run verify` exit 0.
+3. **Review.** `dev-review-changes` on the diff — module boundaries, CLI containment,
+   security and UX invariants, docs drift.
+4. **Finish.** Flip the spec to `Status: shipped with this iteration`; behaviour changes
+   also get manual acceptance via `ext-run-local` (the steps go into the PR's
+   "How to Verify"). Then `git-commit-push`.
+5. **Merge.** `git-open-pr` opens the PR to `main` with the template filled; CI runs the
+   same `npm run verify`; the maintainer reviews and merges. After merge the spec is
+   immutable and the canonical docs are the current truth.
+
 Changing the layer: edit the skill's `SKILL.md` and keep this table in sync (a skill folder
 with no row here, or a row with no folder, is a defect). New repeatable procedure → new skill
 folder + row, in the same PR.
