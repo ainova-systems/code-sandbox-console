@@ -1,18 +1,18 @@
 ---
-name: ext-add-feature
-description: Implement one FR-scoped change end to end - module choice per the dependency map, package.json contributes for new commands, canonical docs synced, verify green. Use for any feature or behaviour change after its spec exists (run spec-new-iteration first for substantial changes).
+name: spec-implement
+description: Implement the current iteration spec end to end - module choice per the dependency map, package.json contributes for new commands, canonical docs synced, verify green. Second step of a change, after spec-new-iteration drafted the spec (a trivial no-spec fix may use it directly too).
 ---
 
-# ext-add-feature
+# spec-implement
 
 The repeatable unit of work in this repo: one FR-scoped iteration, from spec to green verify.
 CLAUDE.md is the rule surface - this skill sequences it, it does not replace it.
 
 ## Steps
 
-1. **Anchor**: read the iteration spec (or run `spec-new-iteration` if the change is substantial
-   and has none), the FR entries it cites in `docs/Features.md`, and the touched sections of
-   `docs/Architecture.md`.
+1. **Anchor**: read the iteration spec (`spec-new-iteration` drafts it if the change is
+   substantial and has none), the FR entries it cites in `docs/Features.md`, and the touched
+   sections of `docs/Architecture.md`.
 2. **Choose modules** with the CLAUDE.md "Module map" and its dependency direction. Hard
    containment rules:
    - Every child-process `sbx` string lives in `src/sbx.ts`; interactive `run`/`exec` shellArgs

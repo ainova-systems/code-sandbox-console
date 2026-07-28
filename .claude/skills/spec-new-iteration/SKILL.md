@@ -32,4 +32,4 @@ canonical-doc updates. This skill only drafts the spec; it never edits `docs/Fea
 
 ## Hand-off
 
-Implementation follows the `ext-add-feature` skill, which picks up the spec and the checklist.
+Implementation follows the `spec-implement` skill, which picks up the spec and the checklist.

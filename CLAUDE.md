@@ -119,7 +119,7 @@ in this file - when a skill and this file disagree, this file wins; fix the skil
 |---|---|---|
 | `dev-onboard` | First contact with the repo on a clean machine | Human + agent |
 | `spec-new-iteration` | Starting any substantial change (drafts the next `docs/specs/00N`) | Agent |
-| `ext-add-feature` | Implementing one FR-scoped change end to end | Agent |
+| `spec-implement` | Implementing one FR-scoped change end to end (after `spec-new-iteration`) | Agent |
 | `ext-run-local` | Seeing a change work in real VS Code; manual FR acceptance | Human + agent |
 | `dev-review-changes` | Before committing non-trivial work; reviewing any PR diff | Agent |
 | `git-commit-push` | Every commit | Agent |
@@ -134,7 +134,7 @@ How a work item travels from idea to `main`; each step is a skill above.
    drafts the next `docs/specs/00N` with `Status: planned` and the docs-sync checklist;
    the spec's "What & why" / "What changed" ARE the plan, and open questions are settled
    there before any code. A trivial fix (typo, comment, doc wording) skips the spec.
-2. **Implement.** `ext-add-feature`: work on a `feature/<slug>` branch off `main`, code
+2. **Implement.** `spec-implement`: work on a `feature/<slug>` branch off `main`, code
    per the module map, cite FR ids, update `Features.md`/`Architecture.md` per the
    checklist in the same change, and end with `npm run verify` exit 0.
 3. **Review.** `dev-review-changes` on the diff — module boundaries, CLI containment,
