@@ -109,6 +109,26 @@ id keeps clones/copies/worktrees conflict-free. See Architecture §6.
 - Do not reintroduce raw-Docker container management — the project deliberately pivoted
   away from it to `sbx` (Architecture §2, specs/001).
 
+## Skills (the executable layer)
+
+Repeatable procedures live as skills in `.claude/skills/<name>/SKILL.md` (Claude Code loads
+them automatically; other agents: read the SKILL.md and follow it). Skills sequence the rules
+in this file - when a skill and this file disagree, this file wins; fix the skill.
+
+| Skill | Use when | Who |
+|---|---|---|
+| `dev-onboard` | First contact with the repo on a clean machine | Human + agent |
+| `spec-new-iteration` | Starting any substantial change (drafts the next `docs/specs/00N`) | Agent |
+| `ext-add-feature` | Implementing one FR-scoped change end to end | Agent |
+| `ext-run-local` | Seeing a change work in real VS Code; manual FR acceptance | Human + agent |
+| `dev-review-changes` | Before committing non-trivial work; reviewing any PR diff | Agent |
+| `git-commit-push` | Every commit | Agent |
+| `git-open-pr` | Opening/updating a PR to `main` | Agent |
+
+Changing the layer: edit the skill's `SKILL.md` and keep this table in sync (a skill folder
+with no row here, or a row with no folder, is a defect). New repeatable procedure → new skill
+folder + row, in the same PR.
+
 ## Git workflow (commits & PRs)
 
 - **Branches (gitflow):** `feature/<slug>`, `bugfix/<slug>`, `hotfix/<slug>`, `release/<x.y.z>`.
