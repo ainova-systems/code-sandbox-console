@@ -4,9 +4,7 @@
 
 [![CI](https://github.com/ainova-systems/code-sandbox-console/actions/workflows/ci.yml/badge.svg)](https://github.com/ainova-systems/code-sandbox-console/actions/workflows/ci.yml)
 
-<!-- TODO(release): uncomment after committing docs/media assets -->
-<!-- ![Sandbox Console](docs/media/hero.gif) -->
-<!-- ![Sandbox Explorer](docs/media/explorer.png) -->
+![Sandbox Console — the Sandboxes view, an agent terminal inside the microVM, and one terminal tab per agent](docs/media/explorer.png)
 
 - **Isolated** — the agent runs in a Docker Sandbox (`sbx`) microVM, not on your host.
 - **Persistent** — stop and resume keeps authentication, installed packages, and history.
@@ -22,6 +20,8 @@ Search **Sandbox Console** in the VS Code Marketplace, or:
 Then open a repository and run **Sandbox: New Sandbox** (or click `+ New Sandbox` in the
 status bar) → pick an agent → **Connect**. A terminal opens with the agent running inside
 the sandbox, in your workspace.
+
+![The New Sandbox form — agent, title, group, credentials; no YAML by hand](docs/media/create.png)
 
 ## Features
 
