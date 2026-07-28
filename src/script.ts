@@ -127,7 +127,7 @@ function body(version: string): string {
 #   connect [key]               create from the recipe if absent, then attach (sbx run)
 #   stop [key]                  stop, state preserved
 #   rm <key> --force            destroy the instance (in-sandbox state is lost)
-#   rebuild [key]               refresh image (FR-053) -> docker build --pull -> save -> sbx template load -> recreate
+#   rebuild [key]               docker build -> save -> sbx template load -> recreate
 #   exec <key|runner> -- <cmd>  run a command in the workspace (-w resolved, clone-aware)
 #   task <key|runner> "<prompt>" [--bg|--json]
 #                               headless claude -p; --bg logs to /tmp, --json prints cost
@@ -279,33 +279,11 @@ build_image() { # <key> — no-op without a dockerfile
   df=$(cfg_field "$1" dockerfile); img=$(cfg_field "$1" image)
   if [ -z "$df" ] || [ -z "$img" ]; then return 0; fi
   ctx=$(cfg_field "$1" context); [ -n "$ctx" ] || ctx="."
-  (cd "$ROOT" && docker build --pull -t "$img" -f ".sandbox/$df" "$ctx")
+  (cd "$ROOT" && docker build -t "$img" -f ".sandbox/$df" "$ctx")
   tar=$(mktemp -t sbx-tmpl-XXXXXX)
   docker save "$img" -o "$tar"
   "$SBX" template load "$tar"
   rm -f "$tar"
-}
-
-refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtainable image
-  local df img agent tar
-  df=$(cfg_field "$1" dockerfile); img=$(cfg_field "$1" image)
-  if [ -n "$df" ]; then return 0; fi                      # build_image pulls the base
-  if [ -n "$img" ]; then
-    # Pull + reload; never remove — a local-only image would be unrecoverable.
-    if docker pull "$img"; then
-      tar=$(mktemp -t sbx-tmpl-XXXXXX)
-      docker save "$img" -o "$tar"
-      "$SBX" template load "$tar"
-      rm -f "$tar"
-    else
-      printf 'sbx.sh: could not pull %s — rebuilding from the cached image\\n' "$img" >&2
-    fi
-    return 0
-  fi
-  # Default agent image: drop the cached registry templates so create re-pulls.
-  agent=$(cfg_field "$1" agent)
-  "$SBX" template ls | awk -v a="$agent" 'NR>1 && $1=="docker/sandbox-templates" && index($4, a)==1 {print $1 ":" $2}' | sort -u |
-    while read -r t; do "$SBX" template rm "$t" || true; done
 }
 
 create_instance() { # <key>
@@ -410,7 +388,6 @@ cmd_rebuild() {
   local key inst
   key=$(require_key "\${1:-}")
   inst=$(instance_name "$key")
-  refresh_image "$key"
   build_image "$key"
   if instance_exists "$inst"; then
     printf 'recreating %s (in-sandbox state is lost; the host workspace survives on direct mount)\\n' "$inst"

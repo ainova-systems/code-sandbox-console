@@ -297,44 +297,6 @@ export async function templateExists(imageTag: string): Promise<boolean> {
   return false;
 }
 
-export interface TemplateInfo {
-  repository: string;
-  tag: string;
-  flavor: string;
-}
-
-/**
- * Parse `sbx template ls` (FR-053). Columns: REPOSITORY, TAG, IMAGE ID, FLAVOR, CREATED;
- * duplicate repo:tag rows can appear (superseded image ids). Returns [] on CLI failure.
- */
-export async function templateList(): Promise<TemplateInfo[]> {
-  const { stdout, code } = await run(["template", "ls"]);
-  if (code !== 0) {
-    return [];
-  }
-  const rows: TemplateInfo[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const cols = line.trim().split(/\s+/);
-    if (cols.length < 4 || cols[0] === "REPOSITORY") {
-      continue;
-    }
-    rows.push({ repository: cols[0], tag: cols[1], flavor: cols[3] });
-  }
-  return rows;
-}
-
-/**
- * Remove a template image from the sbx store so the next create re-pulls it (FR-053).
- * Only for registry-pullable images (the docker/sandbox-templates defaults) — removing a
- * local-only template would be unrecoverable.
- */
-export async function templateRemove(tag: string): Promise<void> {
-  const { stderr, code } = await run(["template", "rm", assertImageTag(tag)]);
-  if (code !== 0) {
-    throw new Error(stderr.trim() || `sbx template rm failed for ${tag}`);
-  }
-}
-
 export interface SecretEntry {
   /** "global" or a sandbox name. */
   scope: string;
