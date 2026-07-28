@@ -66,6 +66,13 @@ manage them from a view in the Explorer instead of the command line.
   create one from the New Sandbox form, which writes it to the project's config; Connect
   then creates the instance if it does not exist yet.
 
+### Fixed
+
+- **Connect and Rebuild no longer fail when another sandbox exists for the same
+  workspace** (for example one left behind by a re-cloned or re-initialised project).
+  Creation now runs as a separate step with a progress notification, so a failure shows
+  its actual error message instead of a terminal closing with exit code 1.
+
 ## 0.1.0 - 2026-06-09 — internal proof of concept (never published)
 
 Terminal-first commands over the `sbx` CLI (create, attach, stop, shell) with startup
