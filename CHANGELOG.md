@@ -48,6 +48,11 @@ manage them from a view in the Explorer instead of the command line.
 
 ### Changed
 
+- **Rebuild always starts from a fresh image.** Rebuilding a sandbox re-fetches the
+  freshest obtainable image for its environment: Dockerfile builds pull the base image,
+  registry images are re-pulled and reloaded, and cached default agent images are
+  dropped so the recreate pulls the current one. Offline, or with a local-only image,
+  the rebuild warns and continues from the cached image instead of failing.
 - **Every slow action now reports progress.** Creating, stopping, deleting, and
   recreating a sandbox show a notification for the whole operation, so a click is never
   answered by several seconds of silence. Interactive prompts still come after the

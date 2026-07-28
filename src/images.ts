@@ -135,7 +135,17 @@ export async function buildAndLoad(
       `${spec.dockerfile} must start with a FROM line (extend a docker/sandbox-templates base image).`
     );
   }
-  const build = await docker(["build", "-t", spec.image, "-f", dockerfile, context]);
+  // --pull: re-fetch the FROM agent base so a rebuild never bakes onto a stale cached
+  // base image (FR-053). A failed pull fails the build — same hard gate as the build.
+  const build = await docker([
+    "build",
+    "--pull",
+    "-t",
+    spec.image,
+    "-f",
+    dockerfile,
+    context,
+  ]);
   if (build.code !== 0) {
     throw new Error(
       `docker build failed for ${spec.image}: ${
@@ -143,16 +153,92 @@ export async function buildAndLoad(
       }`
     );
   }
-  const safe = spec.image.replace(/[^A-Za-z0-9._-]/g, "_");
+  await saveAndLoad(spec.image);
+}
+
+/** `docker save` an image and `sbx template load` it into the sbx store (FR-008/FR-053). */
+async function saveAndLoad(image: string): Promise<void> {
+  const safe = image.replace(/[^A-Za-z0-9._-]/g, "_");
   const tar = path.join(os.tmpdir(), `sbx-tmpl-${safe}-${process.pid}.tar`);
   try {
-    const save = await docker(["save", spec.image, "-o", tar]);
+    const save = await docker(["save", image, "-o", tar]);
     if (save.code !== 0) {
-      throw new Error(`docker save failed for ${spec.image}: ${save.stderr.trim()}`);
+      throw new Error(`docker save failed for ${image}: ${save.stderr.trim()}`);
     }
     await sbx.templateLoad(tar);
   } finally {
     await fs.rm(tar, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * FR-053: make a rebuild start from the freshest obtainable image. Returns true when the
+ * recreate that follows will use a fresh (or freshly-fetchable) image, false when the
+ * refresh could not happen and the cached image remains — the caller warns, never fails:
+ * a rebuild that still works offline beats one that refuses.
+ *
+ * - `dockerfile` set → nothing to do here; `buildAndLoad` pulls the base via `--pull`.
+ * - `image` only → `docker pull` + reload into the store. The stored template is never
+ *   removed: a local-only image (loaded by hand) would be unrecoverable after `rm`.
+ * - default agent image → remove the matching `docker/sandbox-templates` entries
+ *   (flavor prefixed by the agent id) so the next create re-pulls; these are registry
+ *   images by definition, so removal is safe.
+ */
+export async function refreshForRebuild(spec: SandboxSpec): Promise<boolean> {
+  try {
+    if (spec.dockerfile) {
+      return true;
+    }
+    if (spec.image) {
+      if (!(await dockerAvailable())) {
+        return false;
+      }
+      sbx.assertImageTag(spec.image);
+      if ((await docker(["pull", spec.image])).code !== 0) {
+        return false;
+      }
+      await saveAndLoad(spec.image);
+      return true;
+    }
+    const listed = await sbx.templateList();
+    if (listed === null) {
+      return false; // listing failed — the cache state is unknown, so report no refresh
+    }
+    const targets = new Set(
+      listed
+        .filter(
+          (t) =>
+            // Prefix, not equality: one agent ships several flavors (e.g. versioned
+            // variants of its base), all starting with the agent id.
+            t.repository === "docker/sandbox-templates" &&
+            t.flavor.startsWith(spec.agent)
+        )
+        .map((t) => `${t.repository}:${t.tag}`)
+        // A row that fails the argv allowlist (e.g. a dangling "<none>" tag) is not
+        // removable anyway — skip it instead of reporting a failed refresh.
+        .filter((tag) => {
+          try {
+            sbx.assertImageTag(tag);
+            return true;
+          } catch {
+            return false;
+          }
+        })
+    );
+    if (targets.size === 0) {
+      return true; // nothing cached — the create pulls the current image anyway
+    }
+    let ok = true;
+    for (const tag of targets) {
+      try {
+        await sbx.templateRemove(tag);
+      } catch {
+        ok = false; // stays cached; the create reuses it
+      }
+    }
+    return ok;
+  } catch {
+    return false;
   }
 }
 
