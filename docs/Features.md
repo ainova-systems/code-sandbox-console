@@ -258,6 +258,7 @@ Stopping must preserve:
   (host workspace untouched). Confirmation required.
 * **Rebuild image** — re-build the custom image (FR-008) and recreate the sandbox from
   it. Refreshes image-baked tooling; work on the mounted workspace is preserved.
+  Every rebuild starts from the freshest obtainable image (FR-053).
 * **Edit** — add/rotate secrets and published ports on a **running** sandbox
   (non-destructive, no recreate). Kit injection (`sbx kit add`) is a planned follow-up
   (Architecture §7).
@@ -279,7 +280,8 @@ preinstalled, instead of the agent's default image.
   (`FROM docker/sandbox-templates:<flavor>`) so the agent binary, `agent` user, and proxy
   env survive (Architecture §7). Build steps that need root use `USER root` … `USER agent`.
 * Build pipeline (verified): `docker build` → `docker save` → `sbx template load` →
-  `sbx run/create -t <image>`. **Rebuild image** re-runs this pipeline.
+  `sbx run/create -t <image>`. **Rebuild image** re-runs this pipeline with a forced
+  base-image pull (FR-053).
 * Secrets shall **never** be baked into images — they are provisioned via FR-032.
 
 ## FR-009 Configuration Recipe
@@ -602,6 +604,25 @@ subcommands instead of re-encoding naming/lifecycle/secret rules as prose
   passive open never adds it (FR-002).
 * The extension **never executes** the generated script — generation is one-way
   (a committed script is repo-controlled input).
+
+## FR-053 Fresh Image Rebuild
+
+Rebuild shall always start from the freshest obtainable image, per environment kind
+(see Architecture §7/§11); `sbx` itself caches images until `sbx reset` and offers no
+pull/update command, so the extension owns the refresh:
+
+* **Custom Dockerfile** — the build runs `docker build --pull`, re-fetching the agent
+  base image. A failed pull fails the build.
+* **Pulled custom image** (`image` without `dockerfile`) — `docker pull` →
+  `docker save` → `sbx template load` replaces the stored template. Best-effort: when
+  the pull fails (offline, or a local-only image), the rebuild warns and continues from
+  the cached template; the template is never removed.
+* **Default agent image** — the matching `docker/sandbox-templates` entries are removed
+  from the sbx store before recreation, so the create re-pulls the current image.
+
+Existing sandboxes are persistent microVMs and are never affected by a refresh; a fresh
+image applies only to sandboxes created or rebuilt afterwards. The generated project CLI
+(FR-052) mirrors the same semantics in its `rebuild` subcommand.
 
 ---
 

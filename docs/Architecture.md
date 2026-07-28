@@ -68,9 +68,9 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `extension.ts` | Activation, palette commands, status bar item, silent startup discovery feeding it (Features §3, "Attach before Create"). Orchestrates the flows below. |
 | `config.ts` | Parses/writes the committed `.sandbox/config.yaml` recipe, incl. the project `name` (FR-009, §6). |
 | `identity.ts` | Reads/writes the **gitignored** `.sandbox/identity.yaml` — a short random `{id}` per working copy (FR-001, §6). |
-| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). |
+| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
-| `images.ts` | Custom-image pipeline: `docker build` → `docker save` → `sbx template load` (FR-008, §7), with dockerfile/context paths contained inside the repo (§9). |
+| `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). |
 | `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
@@ -210,8 +210,15 @@ visible to `-t` until `template load`ed. Templates persist in the store; only `s
 clears them. **Base-image contract** (build-an-agent docs): non-root `agent` user at UID
 1000, passwordless sudo, `/home/agent/`, HTTP-proxy env forwarding — so a custom
 Dockerfile must `FROM docker/sandbox-templates:<flavor>` and wrap install steps in
-`USER root` … `USER agent`. **Rebuild** = re-run build → reload → recreate the sandbox
-(the host workspace is on the mount, so only image-baked tooling is refreshed, not work).
+`USER root` … `USER agent`. **Rebuild** = refresh the image (FR-053) → re-run build →
+reload → recreate the sandbox (the host workspace is on the mount, so only image-baked
+tooling is refreshed, not work). The refresh is per environment kind: Dockerfile builds
+run `docker build --pull`; a pulled custom image is re-fetched via
+`docker pull` → save → `template load` (best-effort — a local-only image stays cached and
+is never removed); a default agent image has its `docker/sandbox-templates` store entries
+removed so the create re-pulls (registry images by definition). `sbx` v0.31.3 offers no
+pull/update command — its cache is cleared only by `sbx reset` — so the extension owns
+this refresh.
 **Never bake secrets** into a template — the docs warn `template save` captures
 manually-added secrets; use `sbx secret set`.
 
@@ -364,7 +371,7 @@ multiple shells are fine.
 | Operation | What it does | State |
 |---|---|---|
 | **Recreate** | `sbx rm --force` + recreate from the recipe | destroys sandbox state (host workspace untouched) |
-| **Rebuild image** | re-run `docker build` → `template load` → recreate from the new image | refreshes image-baked tooling; workspace is on the mount, so work is safe |
+| **Rebuild image** | refresh the image (FR-053) → re-run `docker build --pull` → `template load` → recreate from the new image | refreshes image-baked tooling; workspace is on the mount, so work is safe |
 | **Edit** | add/rotate secrets (`secret set <sandbox>`) and published ports (`sbx ports`) on a **running** sandbox | non-destructive, no recreate |
 
 `mount` (§6) selects the FS workflow (see §9): `direct` (instant edits, in-sandbox git,
