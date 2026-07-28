@@ -125,6 +125,7 @@ in this file - when a skill and this file disagree, this file wins; fix the skil
 | `git-commit-push` | Every commit | Agent |
 | `git-open-pr` | Opening/updating a PR to `main` | Agent |
 | `git-merge-pr` | Merging a ready PR: gates (CI green, no unhandled comments) → squash merge → local cleanup | Agent |
+| `ext-release` | Shipping a Marketplace release: release branch (version bump + changelog) → validations → VSIX from `main` → tag + GitHub Release; agent does everything, the human only uploads the VSIX | Human + agent |
 
 ### The flow of a change
 
