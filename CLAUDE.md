@@ -76,8 +76,8 @@ Secrets are provisioned *on request* via a form driving
 `src/extension.ts` (commands + startup discovery UX), `config.ts` (`.sandbox/config.yaml`
 recipe parse/write incl. project `name` — FR-009), `identity.ts` (`.sandbox/identity.yaml`
 `{id}` — local random suffix), `sbx.ts`
-(CLI wrapper: lifecycle + `template load`/`secret set`/discovery + `hostToSandboxPath`),
-`images.ts` (custom-image build → save → `template load`, FR-008), `secrets.ts` (provision
+(CLI wrapper: lifecycle + `template load`/`ls`/`rm` + `secret set`/discovery + `hostToSandboxPath`),
+`images.ts` (custom-image build `--pull` → save → `template load` + rebuild image-refresh policy, FR-008/FR-053), `secrets.ts` (provision
 missing secrets via cached-entry picker/prompt, FR-032+FR-051), `blobs.ts` (per-project
 secret cache: DPAPI blobs in `~/.sbx`, shared with the generated CLI — FR-051),
 `script.ts` (generated project CLI `.sandbox/scripts/sbx.sh`, FR-052 — written, never

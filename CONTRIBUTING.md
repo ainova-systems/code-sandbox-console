@@ -55,7 +55,7 @@ and pull requests targeting `main`.
   credentials`. No prefixes (`feat:`), no `[]` brackets. Cite `FR-0xx` IDs where relevant.
 - No identity trailers in commit messages or PR bodies (no `Co-Authored-By`, no names,
   no e-mail addresses).
-- Before you commit, `npx tsc --noEmit` and `npm run build` must both be green.
+- Before you commit, `npm run verify` must be green.
 
 ## Security
 

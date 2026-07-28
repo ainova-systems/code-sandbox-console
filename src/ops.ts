@@ -153,13 +153,27 @@ export async function destroyRef(ref: sandbox.SandboxRef): Promise<void> {
   });
 }
 
-/** FR-007 Rebuild: rebuild the custom image (if any) then recreate the sandbox. */
+/**
+ * FR-007 Rebuild: refresh the image (FR-053), rebuild the custom image (if any), then
+ * recreate the sandbox. A rebuild always starts from the freshest obtainable image;
+ * when the refresh cannot happen (offline, local-only image) it warns and proceeds
+ * from the cache instead of failing.
+ */
 export async function rebuildRef(
   root: vscode.Uri,
   ref: sandbox.SandboxRef
 ): Promise<void> {
   if (ref.spec.image && ref.spec.dockerfile) {
-    await ensureImageForRef(ref, root.fsPath, true);
+    await ensureImageForRef(ref, root.fsPath, true); // docker build --pull (FR-053)
+  } else {
+    const fresh = await withProgress(`Refreshing image for ${ref.name}…`, () =>
+      images.refreshForRebuild(ref.spec)
+    );
+    if (!fresh) {
+      void vscode.window.showWarningMessage(
+        `Could not refresh the image for ${ref.name} — rebuilding from the cached image.`
+      );
+    }
   }
   // Recreate behind one spinner: terminal close (up to ~4s) + `sbx rm` when an instance
   // exists. Wrap the whole block — including the absent path, where only leftover or
