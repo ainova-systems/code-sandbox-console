@@ -146,11 +146,19 @@ Security policy and vulnerability reporting:
 - [Issues & support](https://github.com/ainova-systems/code-sandbox-console/issues)
 - Upstream: [Docker Sandboxes documentation](https://docs.docker.com/ai/sandboxes/)
 
-Licensed MIT. Sandbox Console was designed and implemented by AI coding agents, end to end.
+## AI-First engineering, as a service
+
+Sandbox Console was designed and implemented by AI coding agents, end to end —
+working proof of the method, not a claim about it.
+[Ainova Systems](https://www.ainovasystems.com) helps teams adopt the same way of
+working: AI automation, an AI-First SDLC, and fully autonomous engineering
+pipelines — with humans owning the decisions.
+
+**[Talk to us →](https://www.ainovasystems.com/contact)**
 
 ---
 
-© MB Ainova Systems — <https://www.ainovasystems.com>
+Licensed MIT. © MB Ainova Systems — <https://www.ainovasystems.com>
 
 Docker is a trademark of Docker, Inc. Claude is a trademark of Anthropic, PBC. This
 project is independent and is not affiliated with, endorsed by, or sponsored by Docker or
