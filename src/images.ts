@@ -200,10 +200,16 @@ export async function refreshForRebuild(spec: SandboxSpec): Promise<boolean> {
       await saveAndLoad(spec.image);
       return true;
     }
+    const listed = await sbx.templateList();
+    if (listed === null) {
+      return false; // listing failed — the cache state is unknown, so report no refresh
+    }
     const targets = new Set(
-      (await sbx.templateList())
+      listed
         .filter(
           (t) =>
+            // Prefix, not equality: one agent ships several flavors (e.g. versioned
+            // variants of its base), all starting with the agent id.
             t.repository === "docker/sandbox-templates" &&
             t.flavor.startsWith(spec.agent)
         )

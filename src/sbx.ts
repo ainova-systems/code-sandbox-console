@@ -305,12 +305,13 @@ export interface TemplateInfo {
 
 /**
  * Parse `sbx template ls` (FR-053). Columns: REPOSITORY, TAG, IMAGE ID, FLAVOR, CREATED;
- * duplicate repo:tag rows can appear (superseded image ids). Returns [] on CLI failure.
+ * duplicate repo:tag rows can appear (superseded image ids). Returns null on CLI
+ * failure so callers can tell "store is empty" from "listing failed".
  */
-export async function templateList(): Promise<TemplateInfo[]> {
+export async function templateList(): Promise<TemplateInfo[] | null> {
   const { stdout, code } = await run(["template", "ls"]);
   if (code !== 0) {
-    return [];
+    return null;
   }
   const rows: TemplateInfo[] = [];
   for (const line of stdout.split(/\r?\n/)) {
