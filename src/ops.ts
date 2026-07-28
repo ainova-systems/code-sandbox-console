@@ -6,7 +6,6 @@ import * as secrets from "./secrets";
 import {
   disposeSandboxTerminals,
   openAgentAttach,
-  openAgentCreate,
   openShell,
 } from "./terminal";
 
@@ -99,11 +98,16 @@ export async function ensureImageForRef(
 }
 
 /**
- * Create-or-attach a specific sandbox (FR-003/005). When the recipe needs a custom image
- * or secrets, builds the image and provisions secrets first (creating the sandbox
- * non-attaching so per-sandbox secrets apply); otherwise the verified one-shot `sbx run`.
- * Attaching to an existing sandbox re-prompts for any still-missing secrets (FR-032).
- * Configured ports are published once the sandbox comes up.
+ * Create-or-attach a specific sandbox (FR-003/005). An absent sandbox is always created
+ * non-attaching (`sbx create` behind the progress spinner) and then attached by name:
+ * the one-shot create-form `sbx run <agent> <workspace> --name <name>` matches an
+ * existing sandbox by agent+workspace and ignores `--name` (sbx v0.31.3), so any other
+ * sandbox on the same workspace — e.g. an orphan from a regenerated `.sandbox` identity —
+ * made it exit 1 with the error text lost in the closing terminal. `sbx create` honours
+ * `--name`, and its stderr surfaces as a real error message. Creating first also lets
+ * per-sandbox secrets apply before the agent starts (FR-032). Attaching to an existing
+ * sandbox re-prompts for any still-missing secrets. Configured ports are published once
+ * the sandbox comes up.
  */
 export async function createOrAttach(
   root: vscode.Uri,
@@ -116,13 +120,11 @@ export async function createOrAttach(
     }
     sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
     await ensureImageForRef(ref, root.fsPath);
+    await createSandbox(ref, workspace);
     if (ref.spec.secrets.length > 0) {
-      await createSandbox(ref, workspace); // exists before per-sandbox secret set
-      await secrets.ensureSecrets(ref);
-      openAgentAttach(ref);
-    } else {
-      openAgentCreate(ref, workspace);
+      await secrets.ensureSecrets(ref); // exists before per-sandbox secret set
     }
+    openAgentAttach(ref);
   } else {
     if (ref.spec.secrets.length > 0) {
       // Re-check declared secrets on every attach (FR-032): a cancelled prompt or a
@@ -192,13 +194,13 @@ export async function rebuildRef(
     throw new Error("No workspace open.");
   }
   sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
+  // Same create-then-attach as createOrAttach: `sbx create` honours --name where the
+  // one-shot run create-form does not (see createOrAttach).
+  await createSandbox(ref, workspace);
   if (ref.spec.secrets.length > 0) {
-    await createSandbox(ref, workspace);
     await secrets.ensureSecrets(ref);
-    openAgentAttach(ref);
-  } else {
-    openAgentCreate(ref, workspace);
   }
+  openAgentAttach(ref);
   void publishPortsWhenReady(ref.name, ref.spec.ports);
 }
 

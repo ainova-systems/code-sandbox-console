@@ -104,7 +104,7 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 
 | Action | Extension command | sbx invocation |
 |---|---|---|
-| Create + auto-attach (FR-003) | `Connect` (creates if absent; sandboxes are defined via `New Sandbox`) | `sbx run --name <name> [--clone] [-t <image>] <agent> <workspace>` |
+| Create + auto-attach (FR-003) | `Connect` (creates if absent; sandboxes are defined via `New Sandbox`) | `sbx create --name <name> [--clone] [-t <image>] <agent> <workspace>`, then `sbx run <name>`. Never the one-shot run create-form: `sbx run <agent> <workspace> --name <name>` matches an existing sandbox by agent+workspace and ignores `--name` (v0.31.3), so any other sandbox on the same workspace makes it fail (spec 012) |
 | Attach (FR-005) | `Connect` | `sbx run <name>` (resumes if stopped) |
 | Start (FR-004) | folded into Connect | `sbx run <name>` |
 | Stop (FR-006) | `Stop` | `sbx stop <name>` |

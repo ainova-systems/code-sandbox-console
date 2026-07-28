@@ -169,30 +169,6 @@ export function disposeSandboxTerminals(name: string): Promise<void> {
 }
 
 /**
- * Create-or-attach: `sbx run --name <name> [--clone] [-t <image>] <agent> <workspace>`
- * creates the sandbox if absent and attaches the agent (FR-003 + FR-005). A custom image
- * (`spec.image`) must already be in the sbx store (built/loaded first — see sbx.ts).
- */
-export function openAgentCreate(
-  sandbox: SandboxRef,
-  workspace: string
-): vscode.Terminal {
-  const args = ["run", "--name", sandbox.name];
-  if (sandbox.spec.mount === "clone") {
-    args.push("--clone");
-  }
-  if (sandbox.spec.image) {
-    args.push("-t", sandbox.spec.image);
-  }
-  args.push(sandbox.spec.agent, workspace);
-  return openAgentTerminal(
-    sandbox.name,
-    `${agentLabel(sandbox.spec.agent)} · ${sandbox.name}`,
-    args
-  );
-}
-
-/**
  * Attach to an existing sandbox: `sbx run <name>` resumes the sandbox if stopped. Reuses a
  * live terminal (the same session) when present; otherwise launches the agent fresh. We do
  * NOT auto-pass `--continue`: closing a terminal ends that attach session, so forcing a
