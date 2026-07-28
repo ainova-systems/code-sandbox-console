@@ -15,4 +15,7 @@ LICENSE        text eol=lf
 .vscodeignore  text eol=lf
 
 *.png  binary
+*.gif  binary
+*.jpg  binary
+*.jpeg binary
 *.vsix binary

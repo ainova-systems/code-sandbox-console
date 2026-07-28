@@ -286,8 +286,13 @@ Selection is always explicit — provisioning offers a picker over cached entry 
 (current project's entry first, values never displayed) plus *Enter new value…*; a
 manually entered value can be cached under the project's name, another name, or used
 once. `Sandbox: Manage Cached Secrets` lists/renames/deletes entries. Values move only
-through process stdin/stdout pipes (extension ↔ PowerShell ↔ sbx) — never argv, env
-vars, or the repo; the sbx-side handling is unchanged FR-032.
+through process stdin/stdout pipes (extension ↔ PowerShell ↔ sbx) — never argv, the
+repo, or the extension's own environment; the sbx-side handling is unchanged FR-032.
+**One documented carve-out:** the generated project CLI (§13) resolves its GitHub PAT as
+*project blob → shared blob → `GITHUB_SANDBOX_PAT` environment variable*, the last being
+an explicit last-resort fallback for CI/automation where no DPAPI blob can exist
+(`script.ts` `github_pat()`; it still pipes the resolved value to `sbx` over stdin). The
+extension never reads, writes, or sets that variable.
 
 **Two credential layers for `github`.** Provisioning `github` does two things:
 (1) `sbx secret set` stores it host-side so the proxy authenticates the wire (git HTTPS /

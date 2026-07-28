@@ -15,4 +15,7 @@ CLAUDE.md
 AGENTS.md
 CONTRIBUTING.md
 SECURITY.md
+# Local release working notes (untracked): vsce honours .vscodeignore only,
+# so it must be excluded here or it ships inside the published VSIX.
+RELEASE_PLAN.md
 *.vsix

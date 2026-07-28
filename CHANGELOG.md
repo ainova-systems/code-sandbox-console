@@ -5,72 +5,66 @@ All notable changes to this extension are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-06-09 (pre-release)
+## [0.2.0] - 2026-07-28
 
-From proof of concept to a managed Sandbox UI, plus the rebrand to **Sandbox Console**.
+First public release. Run AI coding agents in isolated, persistent Docker Sandboxes and
+manage them from a view in the Explorer instead of the command line.
 
 ### Added
 
-- **Sandbox Explorer** view: a tree of the repo's sandboxes with live status and
-  per-node actions (Connect, Stop, Shell, Rebuild, Edit, Delete instance, Remove
-  from config), with optional groups.
-- **New / Edit Sandbox** webview form — agent, optional title and group, secrets,
-  ports, and environment; no YAML by hand. The title is a pure display label
-  (sandbox keys derive from the agent), so renaming never touches instances or
-  images.
-- Committed `.sandbox/config.yaml` recipe holding the shared project `name` and
-  sandbox definitions (FR-009).
-- Custom environments per sandbox: the agent's default image, a custom Dockerfile
-  (built via `docker build` → `sbx template load`, FR-008), or a registry image
-  pulled as-is. The Dockerfile's name is editable in the form (so several sandboxes
-  can share one committed file) and a generated file starts `FROM` the selected
-  agent's own base template.
-- Credential provisioning on request via `sbx secret set` with the value piped
-  over stdin (FR-032) — never in the repo, image, or a plaintext env var; for
-  `github` it also runs `gh auth login --with-token` inside the sandbox.
-- Per-project secret cache (FR-051): enter a repo-scoped token once and pick it
-  from a list for every later sandbox/runner — values are DPAPI-encrypted blobs
-  in `~/.sbx` (this machine/user only, names shown, values never), with a
-  `Manage Cached Secrets` command to rename/delete entries.
-- Generated project CLI (FR-052): a committed `.sandbox/scripts/sbx.sh` exposing
-  the sandbox model to shells and AI skills — lifecycle, rebuild pipeline,
-  headless `task` dispatch, ephemeral clone-mode runners with guarded removal,
-  and the cached `secret-github` chain. Regenerated only on extension upgrades;
-  manual edits are never overwritten silently, and the extension never executes it.
-- Multi-agent, multi-sandbox support per repo (Claude Code, Codex, Gemini,
-  OpenCode, plain shell) with a service registry for credentials.
-- Status bar shows the active sandbox by its display name; clicking it (or
-  `Sandbox: Switch Sandbox`) opens a picker over all recipe sandboxes, with an
-  optional committed `default: true` recipe flag (FR-050).
-- MIT license.
+- **Sandboxes view** in the Explorer: a tree of the current repo's sandboxes with live
+  status and per-item actions — Connect, Stop, Shell, Rebuild, Edit, Delete instance,
+  Remove from config — with optional grouping.
+- **New / Edit Sandbox form**: pick the agent, an optional title and group, credentials,
+  ports, and environment without writing YAML by hand. The title is a pure display
+  label, so renaming a sandbox never touches the running instance or its image.
+- **Shared project setup**: sandbox definitions live in a committed
+  `.sandbox/config.yaml`, so everyone who clones the repo gets the same sandboxes. A
+  small local file (gitignored) keeps each working copy's instances separate, so clones,
+  copies, and worktrees never collide.
+- **Custom environments per sandbox**: the agent's default image, a Dockerfile in the
+  repo (built and loaded as a sandbox template), or a registry image used as-is. A
+  generated Dockerfile starts from the selected agent's own base image, and its filename
+  is editable so several sandboxes can share one committed file.
+- **Credentials on request**: missing credentials are asked for at the moment they are
+  needed and handed to the sandbox over a pipe — never stored in the repo, the image, or
+  a plaintext environment variable. For GitHub, the token is also used to sign in the
+  `gh` CLI inside the sandbox.
+- **Reusable credential cache**: enter a token once for a project and pick it from a list
+  for every later sandbox or runner. Values are encrypted for the current Windows user
+  and stored outside the repo (names are shown, values never are), with a
+  `Sandbox: Manage Cached Secrets` command to rename or delete entries.
+- **Companion shell script** generated into `.sandbox/scripts/sbx.sh`, which exposes the
+  same sandbox model to terminals, scripts, and AI skills: lifecycle, rebuilds, headless
+  task dispatch, throwaway clone-mode runners with guarded removal, and the cached GitHub
+  token chain. It is refreshed on extension upgrades, never silently overwrites your
+  edits, and is never executed by the extension itself.
+- **Multiple agents and sandboxes per repo**: Claude Code, Codex, Copilot, Cursor,
+  Gemini, OpenCode, Droid, Kiro, a plain shell, and anything else the local `sbx`
+  install reports (the list is discovered live).
+- **Status bar entry** showing the active sandbox; clicking it (or
+  `Sandbox: Switch Sandbox`) opens a picker over every sandbox in the project, and a
+  committed flag can mark one of them as the default.
 
 ### Changed
 
-- Rebranded from the *Ainoflow Sandbox Terminal* POC to **Sandbox Console**
-  (publisher `Ainova Systems`); commands now live under `sandboxConsole.*`.
-- Startup is now completely quiet — opening a workspace never raises
-  notifications. Discovery feeds the status bar (live state, `+ New Sandbox`
-  with no recipe) and the Sandboxes view; Connect is one click away in either.
-- `.sandbox/identity.yaml` simplified to a short random `{id}`; the sbx sandbox
-  name is `<name>-<key>-<id>`, keeping clones/copies/worktrees conflict-free.
+- **Every slow action now reports progress.** Creating, stopping, deleting, and
+  recreating a sandbox show a notification for the whole operation, so a click is never
+  answered by several seconds of silence. Interactive prompts still come after the
+  progress box, never underneath it.
+- **Opening a workspace is quiet and read-only.** Startup raises no notifications and no
+  longer writes anything into the repo: the sandboxes are listed as *not created* until
+  you actually create one. Discovery only feeds the status bar and the Sandboxes view,
+  where Connect is one click away. Read-only checkouts list normally instead of falling
+  back to an empty view.
+- **Sandboxes are always defined explicitly.** There is no implicit default sandbox: you
+  create one from the New Sandbox form, which writes it to the project's config; Connect
+  then creates the instance if it does not exist yet.
 
-### Removed
+## 0.1.0 - 2026-06-09 — internal proof of concept (never published)
 
-- The `Create Claude Sandbox` command and the implicit single-Claude default:
-  sandboxes are now always defined explicitly (New Sandbox form → committed
-  recipe); Connect creates the primary sandbox when it does not exist yet.
+Terminal-first commands over the `sbx` CLI (create, attach, stop, shell) with startup
+discovery of existing sandboxes and per-repo sandbox identity in a single local file.
+Superseded by 0.2.0 and listed here only for history.
 
-## [0.1.0] - 2026-06-09
-
-Initial proof of concept (internal, not published to the Marketplace).
-
-### Added
-
-- Terminal-first commands over the `sbx` CLI: Create Claude Sandbox, Attach,
-  Stop, Open Shell — no container management by hand.
-- `sbx` CLI wrapper: binary resolution off-PATH (Windows), lifecycle via
-  `sbx run` / `sbx stop` / `sbx rm`, discovery via `sbx ls --json`, and host →
-  sandbox workspace path translation.
-- Startup discovery of existing sandboxes with Attach as the default action.
-- Per-repo sandbox identity in a single gitignored file (the `.sandbox/` folder
-  layout arrived in 0.2.0).
+[0.2.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.2.0
