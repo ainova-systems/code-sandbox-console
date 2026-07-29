@@ -646,6 +646,9 @@ flight per sandbox at any time, and the UI that starts one shall show that it is
 * **Remove from config** destroys the instance before dropping the recipe entry; a
   *declined* destroy keeps the entry, exactly as a failed one does, so a live microVM is
   never orphaned.
+* **A busy sandbox looks busy.** Its Explorer node shows a spinner and the running
+  operation, and its actions are hidden for the duration — the guard would decline them
+  anyway, and an action you can click but not use is a lie about the state.
 * The New/Edit form's **Save** disables itself and the rest of the form for the duration
   of the save, showing the running phase (*Creating…* / *Applying…*), and is handed back
   if the save fails with the panel still open.
@@ -668,7 +671,8 @@ view's overflow menu, and a **Show Log** action on every error notification.
   interleaves.
 * The most recent output line is also shown as the **progress notification's message**, so
   the spinner reports what is happening (`#8 [4/9] RUN npm install`) instead of standing
-  still.
+  still. Stages that move data while printing nothing (`docker save`, `sbx template load`)
+  announce themselves, so the box never sits on a stale line through a long silent step.
 * Discovery and probe calls (`sbx ls --json`, `template ls`, `--help`) run on focus
   change and tree render and are logged **only when they fail** — which is a gain, since
   several of those callers otherwise degrade silently.

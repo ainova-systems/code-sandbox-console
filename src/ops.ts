@@ -39,6 +39,16 @@ class Cancelled extends Error {
  */
 const inFlight = new Map<string, string>();
 
+const busyChanged = new vscode.EventEmitter<void>();
+
+/** Fires whenever a sandbox becomes busy or free, so the Explorer can re-render (FR-054). */
+export const onDidChangeBusy = busyChanged.event;
+
+/** The operation running for this sandbox, if any — the Explorer's busy label (FR-054). */
+export function busyLabel(name: string): string | undefined {
+  return inFlight.get(name);
+}
+
 /**
  * FR-054: run `fn` only if nothing else is already running for this sandbox; otherwise
  * report what is running and decline. Returns whether it ran, which the "Remove from
@@ -70,6 +80,7 @@ async function exclusive(
     return false;
   }
   inFlight.set(name, operation);
+  busyChanged.fire();
   try {
     await fn();
     return true;
@@ -83,6 +94,7 @@ async function exclusive(
     throw err;
   } finally {
     inFlight.delete(name);
+    busyChanged.fire();
   }
 }
 

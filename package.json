@@ -219,7 +219,7 @@
         },
         {
           "command": "sandboxConsole.item.attach",
-          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\./",
+          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\.(running|stopped|absent)$/",
           "group": "inline@2"
         },
         {
@@ -239,7 +239,7 @@
         },
         {
           "command": "sandboxConsole.item.attach",
-          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\./",
+          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\.(running|stopped|absent)$/",
           "group": "1_run@1"
         },
         {

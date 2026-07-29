@@ -428,6 +428,7 @@ instance) → absent → Remove from config:
 | running | Stop · Connect · *(Shell in the context menu)* |
 | stopped | Connect · Edit · Delete instance · *(Rebuild in the context menu)* |
 | absent (defined, no instance) | Connect (creates the instance) · Edit · Remove from config |
+| busy (transient — an operation is in flight, FR-054) | none |
 
 Two distinct deletes: **Delete instance** (`sbx rm`, keeps the recipe — recreatable;
 shown when stopped; runs **before** the recipe entry is touched) vs **Remove from
@@ -464,6 +465,11 @@ Distinct sandboxes stay independent. Two consequences worth knowing: "Remove fro
 treats a *declined* destroy exactly like a failed one and keeps the recipe entry (never
 orphan a live microVM), and the New/Edit form disables its **Save** for the duration of a
 save, restoring it only if the save fails with the panel still open.
+
+A busy node renders as `sandbox.busy` (spinner icon, the operation as its description),
+which matches none of the menus' `when` clauses, so its actions disappear until the
+operation ends; `ops.onDidChangeBusy` re-renders the tree on the click rather than on the
+next focus change. The state-gated table above therefore has a fourth, transient row.
 
 **Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
 display-only, **never** part of the key, sbx name, file names, or image tags, so it is

@@ -32,13 +32,24 @@ class SandboxNode extends vscode.TreeItem {
     public readonly ref?: sandbox.SandboxRef
   ) {
     super(spec.title || spec.key, vscode.TreeItemCollapsibleState.None);
-    this.description = `${agentLabel(spec.agent)} · ${state}`;
-    this.tooltip = ref
+    // FR-054: a sandbox with an operation in flight renders busy. `sandbox.busy` matches
+    // none of the menus' `when` clauses, so every action disappears for the duration —
+    // the guard would decline them anyway, and an action you can click but not use is a
+    // lie about the state.
+    const busy = ref ? ops.busyLabel(ref.name) : undefined;
+    this.description = busy
+      ? `${agentLabel(spec.agent)} · ${busy.toLowerCase()}…`
+      : `${agentLabel(spec.agent)} · ${state}`;
+    this.tooltip = busy
+      ? `${ref?.name} — ${busy} in progress`
+      : ref
       ? `${ref.name} — ${state}`
       : `${spec.title || spec.key} — not created`;
-    this.contextValue = `sandbox.${state}`;
+    this.contextValue = busy ? "sandbox.busy" : `sandbox.${state}`;
     this.iconPath = new vscode.ThemeIcon(
-      state === "running"
+      busy
+        ? "sync~spin"
+        : state === "running"
         ? "circle-filled"
         : state === "stopped"
         ? "circle-outline"
@@ -387,6 +398,9 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
           }
         })
     ),
+    // FR-054: re-render the moment a sandbox becomes busy or free, so the spinner and the
+    // hidden actions appear on the click, not on the next focus change.
+    ops.onDidChangeBusy(() => provider.refresh()),
     vscode.window.onDidChangeWindowState((s) => {
       if (s.focused) {
         provider.refresh();

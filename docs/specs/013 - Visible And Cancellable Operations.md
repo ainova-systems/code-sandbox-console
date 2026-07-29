@@ -53,7 +53,16 @@ implementation and can never drift apart. `destroyRef` returns whether it ran, b
 rule the code already followed for a *failed* destroy, so a live microVM is never
 orphaned.
 
-The webview form got the matching *visual* half: on submit, **Save** is disabled and
+The Explorer got the matching *visual* half: a node whose sandbox is busy renders as
+`sandbox.busy` — spinner icon, the running operation as its description — and that
+contextValue matches none of the menus' `when` clauses, so its actions vanish for the
+duration. (The `item.attach` clauses were tightened from `/^sandbox\./` to an explicit
+state list so Connect goes with them.) `ops.onDidChangeBusy` re-renders on the click
+rather than on the next focus change. Manual acceptance is what asked for this: the guard
+already declined the clicks, but the actions still *looked* available, and an action you
+can click but not use is a lie about the state.
+
+The webview form got the same treatment: on submit, **Save** is disabled and
 relabelled to the running phase (*Creating…* / *Applying…*), the rest of the form is
 disabled with it, and an inline status line replaces the silent wait. Cancel is disabled
 too — closing the panel would not stop the work; the way out is the progress

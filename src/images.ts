@@ -138,15 +138,24 @@ export async function buildAndLoad(
   await saveAndLoad(spec.image, ctx);
 }
 
-/** `docker save` an image and `sbx template load` it into the sbx store (FR-008/FR-053). */
+/**
+ * `docker save` an image and `sbx template load` it into the sbx store (FR-008/FR-053).
+ *
+ * Both commands move gigabytes while printing almost nothing, and they run inside the
+ * build's progress box. Without a stage note the notification would sit on `docker build`'s
+ * last line (which BuildKit prints *after* the build finishes) for the minutes these take —
+ * the same "is it stuck?" gap FR-055 exists to close — so each stage announces itself.
+ */
 async function saveAndLoad(image: string, ctx?: log.OpContext): Promise<void> {
   const safe = image.replace(/[^A-Za-z0-9._-]/g, "_");
   const tar = path.join(os.tmpdir(), `sbx-tmpl-${safe}-${process.pid}.tar`);
   try {
+    ctx?.onLine?.(`Exporting ${image} (this moves the whole image, and is quiet)…`);
     const save = await docker(["save", image, "-o", tar], ctx);
     if (save.code !== 0) {
       throw new Error(`docker save failed for ${image}: ${save.stderr.trim()}`);
     }
+    ctx?.onLine?.(`Loading ${image} into the sbx template store…`);
     await sbx.templateLoad(tar, ctx);
   } finally {
     await fs.rm(tar, { force: true }).catch(() => undefined);
