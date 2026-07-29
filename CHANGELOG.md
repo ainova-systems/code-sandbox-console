@@ -5,6 +5,48 @@ All notable changes to this extension are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-29
+
+Long operations — image builds, sandbox creation — used to run behind a notification that
+never changed a word, sometimes for minutes. This release makes them visible, stoppable,
+and impossible to start twice by accident.
+
+### Added
+
+- **Operation log.** A `Sandbox Console` output panel shows every command the extension
+  runs, streamed line by line as it happens, with its exit code and how long it took.
+  Open it from `Sandbox: Show Log`, from the Sandboxes view menu, or from the button that
+  now appears on error notifications. Credential values never appear in it.
+- **Live progress.** The notification for a build or a create reports what the command is
+  doing right now — the current build step, and the slow, quiet stages that move an image
+  into the sandbox runtime — instead of standing still.
+- **Cancel.** Long operations can be stopped from their notification. An image build stops
+  immediately. Cancelling a sandbox creation waits for it to finish and then removes the
+  sandbox, so it can take as long as the creation itself. That wait is deliberate:
+  interrupting the sandbox tool partway can leave a sandbox name permanently unusable.
+
+### Changed
+
+- **One operation per sandbox at a time.** Acting on a sandbox that is already busy now
+  tells you what is running instead of starting a second operation beside it. Different
+  sandboxes still run in parallel.
+- **A busy sandbox looks busy.** Its item in the Sandboxes view shows a spinner and the
+  running operation, and its actions are hidden until it finishes.
+- **The New/Edit form shows that it is working.** Save disables itself and the rest of the
+  form for the duration, and is handed back if the save fails.
+- **A clearer error when a sandbox name is stuck.** If creation fails because the name is
+  still held inside the sandbox runtime — a known Docker Sandboxes issue with no released
+  fix — the message now explains what happened and how to get past it, instead of showing
+  a raw daemon error.
+
+### Fixed
+
+- **Rebuild could run twice at once.** Starting it from both the command palette and the
+  Sandboxes view, or clicking again during a long build, started two builds against the
+  same sandbox, which then raced each other over the same image and instance.
+- **Background checks no longer fail silently.** A failed sandbox or template listing used
+  to degrade quietly to "nothing found"; it is now recorded in the operation log.
+
 ## [0.2.0] - 2026-07-28
 
 First public release. Run AI coding agents in isolated, persistent Docker Sandboxes and
@@ -79,4 +121,5 @@ Terminal-first commands over the `sbx` CLI (create, attach, stop, shell) with st
 discovery of existing sandboxes and per-repo sandbox identity in a single local file.
 Superseded by 0.2.0 and listed here only for history.
 
+[0.3.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.2.0
