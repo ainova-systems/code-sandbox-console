@@ -3,6 +3,7 @@ import { agentLabel } from "./agents";
 import { readConfig, SandboxConfig, SandboxSpec } from "./config";
 import { openForm, showInvalidConfig } from "./form";
 import { ensureIdentity, readIdentity } from "./identity";
+import * as log from "./log";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
@@ -31,6 +32,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("sandboxConsole.stop", () => stop()),
     vscode.commands.registerCommand("sandboxConsole.openShell", () => shell()),
     vscode.commands.registerCommand("sandboxConsole.rebuild", () => rebuild()),
+    // FR-055: the operation log — every sbx/docker invocation, streamed while it runs.
+    vscode.commands.registerCommand("sandboxConsole.showLog", () => log.show()),
+    { dispose: () => log.dispose() },
     vscode.commands.registerCommand("sandboxConsole.pickSandbox", () =>
       pickSandbox()
     ),
@@ -77,9 +81,17 @@ function fail(action: string, err: unknown): void {
   const hint = /log\s*in|sign\s*in|unauthorized|authenticat/i.test(msg)
     ? ' (If you are not signed in, run "sbx login".)'
     : "";
-  vscode.window.showErrorMessage(
-    `Sandbox Console: ${action} failed. ${msg}${hint}`
-  );
+  // FR-055: the full CLI output that produced this message is one click away.
+  void vscode.window
+    .showErrorMessage(
+      `Sandbox Console: ${action} failed. ${msg}${hint}`,
+      "Show Log"
+    )
+    .then((choice) => {
+      if (choice === "Show Log") {
+        log.show();
+      }
+    });
 }
 
 /**

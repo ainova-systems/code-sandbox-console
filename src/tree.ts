@@ -9,6 +9,7 @@ import {
 } from "./config";
 import { openForm } from "./form";
 import { ensureIdentity, readIdentity } from "./identity";
+import * as log from "./log";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
@@ -228,7 +229,14 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
 
 function reportError(action: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
-  vscode.window.showErrorMessage(`Sandbox Console: ${action} failed. ${msg}`);
+  // FR-055: the full CLI output that produced this message is one click away.
+  void vscode.window
+    .showErrorMessage(`Sandbox Console: ${action} failed. ${msg}`, "Show Log")
+    .then((choice) => {
+      if (choice === "Show Log") {
+        log.show();
+      }
+    });
 }
 
 /** Register the Explorer view + its per-node commands. */
@@ -369,7 +377,11 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
             // (otherwise the microVM is orphaned, reachable only via raw `sbx ls`/`rm`).
             // No identity (n.ref undefined) → no instance can exist → nothing to destroy.
             if (n.ref && (await sandbox.state(n.ref)) !== "absent") {
-              await ops.destroyRef(n.ref);
+              // FR-054: a declined destroy (another operation is in flight for this
+              // sandbox) must keep the entry too — same reason as a failed one.
+              if (!(await ops.destroyRef(n.ref))) {
+                return;
+              }
             }
             await removeFromConfig(root, n.key);
           }

@@ -95,6 +95,12 @@
         "category": "Sandbox"
       },
       {
+        "command": "sandboxConsole.showLog",
+        "title": "Show Log",
+        "category": "Sandbox",
+        "icon": "$(output)"
+      },
+      {
         "command": "sandboxConsole.refresh",
         "title": "Refresh",
         "category": "Sandbox",
@@ -198,6 +204,11 @@
           "command": "sandboxConsole.refresh",
           "when": "view == sandboxConsoleExplorer",
           "group": "navigation@2"
+        },
+        {
+          "command": "sandboxConsole.showLog",
+          "when": "view == sandboxConsoleExplorer",
+          "group": "1_log@1"
         }
       ],
       "view/item/context": [

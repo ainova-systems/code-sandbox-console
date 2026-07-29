@@ -150,6 +150,9 @@ export async function openForm(
             .executeCommand("sandboxConsole.refresh")
             .then(undefined, () => undefined);
         } catch (err) {
+          // The panel stays open on failure — hand the form back to the user so the
+          // corrected values can be re-submitted (FR-054).
+          void panel.webview.postMessage({ type: "idle" });
           if (!(err instanceof HandledError)) {
             vscode.window.showErrorMessage(
               `Sandbox Console: ${
@@ -505,8 +508,31 @@ const SCRIPT = `(function(){
 
   document.getElementById('mount').value = I.mount || 'direct';
 
-  document.getElementById('cancel').addEventListener('click', function(){ vscode.postMessage({type:'cancel'}); });
-  document.getElementById('save').addEventListener('click', function(){
+  // FR-054 (UI half): a save can block for minutes on an image build, so the form shows
+  // that it is working. The host already ignores a re-entrant submit — without this the
+  // second click was silently dropped, which reads as "the button doesn't work".
+  var saveBtn = document.getElementById('save');
+  var cancelBtn = document.getElementById('cancel');
+  var statusEl = document.getElementById('status');
+  var busyLabel = I.mode === 'edit' ? 'Applying\\u2026' : 'Creating\\u2026';
+  function setBusy(on){
+    Array.prototype.forEach.call(document.querySelectorAll('input,select,button'), function(el){ el.disabled = on; });
+    saveBtn.textContent = on ? busyLabel : 'Save';
+    // Cancel is disabled too: closing the panel would not stop the work. The way out is
+    // the progress notification's own Cancel (FR-056).
+    statusEl.textContent = on
+      ? 'Working\\u2026 progress is in the notification; "Sandbox: Show Log" has the details.'
+      : '';
+    if (!on && I.agentLocked){ agSel.disabled = true; }
+  }
+  window.addEventListener('message', function(e){
+    // Sent when the save failed and the panel stayed open — allow a retry.
+    if (e.data && e.data.type === 'idle'){ setBusy(false); }
+  });
+
+  cancelBtn.addEventListener('click', function(){ vscode.postMessage({type:'cancel'}); });
+  saveBtn.addEventListener('click', function(){
+    if (saveBtn.disabled) return;
     var sel = document.querySelector('input[name=env]:checked');
     var env = sel ? sel.value : 'default';
     var secrets=[]; Array.prototype.forEach.call(document.querySelectorAll('.c-sec'), function(c){ if (c.checked) secrets.push(c.value); });
@@ -523,6 +549,7 @@ const SCRIPT = `(function(){
       mount: document.getElementById('mount').value,
       isDefault: document.getElementById('isDefault').checked
     }});
+    setBusy(true); // after reading the fields — disabled inputs still read fine, but order is clearer
   });
 })();`;
 
@@ -566,7 +593,9 @@ function getHtml(data: InitData, nonce: string): string {
   details > .field{ margin-top:14px; }
   .port-row{ display:flex; gap:8px; align-items:center; margin:0 0 6px; }
   .port-row input{ width:160px; }
-  .footer{ display:flex; gap:10px; margin-top:20px; }
+  .footer{ display:flex; gap:10px; margin-top:20px; align-items:center; }
+  .status{ color:var(--vscode-descriptionForeground); font-size:12px; }
+  button:disabled{ opacity:.5; cursor:default; }
   button{ font-family:inherit; font-size:13px; border:none; border-radius:4px; padding:7px 16px; cursor:pointer; }
   button.primary{ background:var(--vscode-button-background); color:var(--vscode-button-foreground); }
   button.primary:hover{ background:var(--vscode-button-hoverBackground); }
@@ -638,6 +667,7 @@ function getHtml(data: InitData, nonce: string): string {
   <div class="footer">
     <button id="save" class="primary" type="button">Save</button>
     <button id="cancel" class="secondary" type="button">Cancel</button>
+    <span id="status" class="status" aria-live="polite"></span>
   </div>
 </div>
 <script nonce="${nonce}">const INIT = ${initJson};
