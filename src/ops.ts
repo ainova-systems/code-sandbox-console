@@ -69,7 +69,9 @@ async function exclusive(
   if (running) {
     void vscode.window
       .showWarningMessage(
-        `${running} is already running for ${name} — wait for it to finish, or cancel it from its notification.`,
+        // No promise of a Cancel button: Stop, Delete and a Rebuild's removal stage are
+        // deliberately non-cancellable (FR-056), so their notification has none.
+        `${running} is already running for ${name} — wait for it to finish.`,
         "Show Log"
       )
       .then((choice) => {

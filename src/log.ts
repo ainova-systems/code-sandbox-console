@@ -97,9 +97,17 @@ export interface RunOptions extends OpContext {
   killOnCancel?: boolean;
 }
 
-/** Retained output per stream. The child is never killed for exceeding it — only the
- * buffer stops growing (tail kept: error text lives at the end). Matches the ceiling the
- * previous execFile-based runners used, so parsed outputs are unaffected. */
+/**
+ * Retained output per stream. The child is never killed for exceeding it — only the buffer
+ * stops growing, and the **tail** is what survives, which is where a failing command's
+ * error text lives.
+ *
+ * This lowers the ceiling for `docker` (the old execFile runner allowed 64 MB) and keeps
+ * it for `sbx` (4 MB). Deliberate: nothing parses docker output — it only feeds error
+ * messages, which want the end — while every parsed output (`ls --json`, `template ls`,
+ * `--help`) is orders of magnitude below the cap. Retaining 64 MB per build in the
+ * extension host to preserve the head of a build log nobody reads is the worse trade.
+ */
 const MAX_RETAINED = 4 * 1024 * 1024;
 
 function appendCapped(buffer: string, chunk: string): string {
@@ -153,6 +161,12 @@ export function run(
     if (!opts.quiet) {
       out().appendLine(head);
     }
+    // Every exit goes through this, so the header + lines + exit bracketing holds on all
+    // paths — including a spawn that throws before there is a child to listen to.
+    const writeTail = (code: number): void =>
+      out().appendLine(
+        `${mark}→ exit ${code} (${formatDuration(Date.now() - started)})`
+      );
     let stdout = "";
     let stderr = "";
     // Carry incomplete lines between chunks so a line split across reads is emitted once.
@@ -179,7 +193,11 @@ export function run(
       child = spawn(exe, args, { windowsHide: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      out().appendLine(opts.quiet ? `${head}\n${mark}  ${message}` : `${mark}  ${message}`);
+      if (opts.quiet) {
+        out().appendLine(head); // quiet calls log only on failure — this is one
+      }
+      out().appendLine(`${mark}  ${message}`);
+      writeTail(1);
       resolve({ stdout: "", stderr: message, code: 1 });
       return;
     }
@@ -221,9 +239,8 @@ export function run(
       settled = true;
       cancel?.dispose();
       emit(message ? `${message}\n` : "", true);
-      const tail = `${mark}→ exit ${code} (${formatDuration(Date.now() - started)})`;
       if (opts.quiet) {
-        // A quiet call that failed is worth the two lines: several callers turn a
+        // A quiet call that failed is worth the three lines: several callers turn a
         // non-zero exit into a silent `false`/`[]`, so this is the only trace of it.
         if (code !== 0) {
           out().appendLine(head);
@@ -234,10 +251,10 @@ export function run(
           if (text) {
             out().appendLine(`${mark}  ${text.replace(/\r?\n/g, `\n${mark}  `)}`);
           }
-          out().appendLine(tail);
+          writeTail(code);
         }
       } else {
-        out().appendLine(tail);
+        writeTail(code);
       }
       resolve({ stdout, stderr: stderr || message || "", code });
     };

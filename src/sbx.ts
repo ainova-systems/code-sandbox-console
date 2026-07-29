@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { ChildProcessWithoutNullStreams, spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 import * as log from "./log";
@@ -412,20 +412,32 @@ export async function listSecrets(): Promise<SecretEntry[]> {
 function runWithStdin(args: string[], input: string): Promise<RunResult> {
   const done = log.opaqueCommand(sbxPath(), args);
   return new Promise((resolve) => {
-    const child = spawn(sbxPath(), args, { windowsHide: true });
     let stdout = "";
     let stderr = "";
+    // A failed spawn emits "error" and then "close"; settle on whichever comes first, or
+    // the log gets two exit lines for one command. Same guard as log.run.
+    let settled = false;
+    const finish = (code: number, message?: string): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      // Exit code only — enough to see in the log that it ran and whether it worked.
+      done(code);
+      resolve({ stdout, stderr: stderr || message || "", code });
+    };
+
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(sbxPath(), args, { windowsHide: true });
+    } catch (err) {
+      finish(1, err instanceof Error ? err.message : String(err));
+      return;
+    }
     child.stdout.on("data", (d) => (stdout += d.toString()));
     child.stderr.on("data", (d) => (stderr += d.toString()));
-    // Exit code only — enough to see in the log that it ran and whether it worked.
-    child.on("error", (err) => {
-      done(1);
-      resolve({ stdout, stderr: stderr || err.message, code: 1 });
-    });
-    child.on("close", (code) => {
-      done(code ?? 1);
-      resolve({ stdout, stderr, code: code ?? 1 });
-    });
+    child.on("error", (err) => finish(1, err.message));
+    child.on("close", (code) => finish(code ?? 1));
     child.stdin.on("error", () => undefined); // ignore EPIPE if the process exits early
     child.stdin.write(input);
     child.stdin.end();
