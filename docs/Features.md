@@ -258,7 +258,8 @@ Stopping must preserve:
   (host workspace untouched). Confirmation required.
 * **Rebuild image** — re-build the custom image (FR-008) and recreate the sandbox from
   it. Refreshes image-baked tooling; work on the mounted workspace is preserved.
-  Every rebuild starts from the freshest obtainable image (FR-053).
+  Every rebuild starts from the freshest obtainable image (FR-053); the build streams
+  into the progress box and can be cancelled from it (FR-055/FR-056).
 * **Edit** — add/rotate secrets and published ports on a **running** sandbox
   (non-destructive, no recreate). Kit injection (`sbx kit add`) is a planned follow-up
   (Architecture §7).
@@ -437,7 +438,8 @@ by hand (see Architecture §8).
 * Values are entered in a password input and piped over stdin to
   `sbx secret set [-g | <sandbox>] <service>` (no flag — `--password-stdin` is a
   registry-login option, not used for service secrets) — never in argv or shell history,
-  never written to the repo, never baked into images.
+  never written to the repo, never baked into images, and never in the operation log
+  (FR-055 records that the call happened and its exit code, nothing else).
 * Scope is user-chosen: **per-sandbox** (deliberate for repo-scoped tokens) or global `-g`
   (shared creds like the Anthropic key).
 * `anthropic` remains satisfied by the host-global OAuth/keychain credential by default
@@ -513,9 +515,11 @@ running → Stop → Edit/Rebuild/Delete instance → Remove from config. Two de
 gone). See Architecture §12.
 
 Every slow lifecycle action (Create, Stop, Delete instance, Rebuild/Recreate) shows a
-progress notification while it runs — the same feedback box Rebuild-image already
-showed — so clicking an action is never a silent gap. Terminal-based Connect/Shell are
-their own feedback (the terminal opens at once). See Architecture §12.
+progress notification while it runs — so clicking an action is never a silent gap. The
+box reports the running command's latest output line (FR-055), the long ones can be
+cancelled from it (FR-056), and only one operation per sandbox can be in flight at a
+time (FR-054). Terminal-based Connect/Shell are their own feedback (the terminal opens
+at once). See Architecture §12.
 
 Example:
 
@@ -574,6 +578,7 @@ Rebuild
 Switch Sandbox        — pick the active sandbox from the recipe list (FR-050)
 New Sandbox           — the agent is picked in the form; no per-agent Open commands
 Manage Cached Secrets — list/rename/delete per-project cached secret entries (FR-051)
+Show Log              — reveal the operation log (FR-055)
 Refresh
 ```
 
@@ -623,6 +628,82 @@ pull/update command, so the extension owns the refresh:
 Existing sandboxes are persistent microVMs and are never affected by a refresh; a fresh
 image applies only to sandboxes created or rebuilt afterwards. The generated project CLI
 (FR-052) mirrors the same semantics in its `rebuild` subcommand.
+
+---
+
+## FR-054 One Operation Per Sandbox
+
+At most one lifecycle operation (Connect, Shell, Stop, Rebuild, Delete) shall be in
+flight per sandbox at any time, and the UI that starts one shall show that it is running.
+
+* A second action on a busy sandbox is **declined, not queued**: the extension names the
+  operation already running and offers **Show Log** (FR-055). Attaching the second click
+  to the first operation would look like it worked and then produce one outcome for two
+  requests.
+* Different operations are mutually exclusive too — a Stop landing in the middle of a
+  Rebuild's recreate is the same race as a second Rebuild. Distinct sandboxes are
+  independent and may run in parallel.
+* **Remove from config** destroys the instance before dropping the recipe entry; a
+  *declined* destroy keeps the entry, exactly as a failed one does, so a live microVM is
+  never orphaned.
+* **A busy sandbox looks busy.** Its Explorer node shows a spinner and the running
+  operation, and its actions are hidden for the duration — the guard would decline them
+  anyway, and an action you can click but not use is a lie about the state. Once cancel is
+  pressed the node says *cancelling*, since the work can outlive the click (FR-056).
+* The New/Edit form's **Save** disables itself and the rest of the form for the duration
+  of the save, showing the running phase (*Creating…* / *Applying…*), and is handed back
+  if the save fails with the panel still open.
+
+See Architecture §12.
+
+---
+
+## FR-055 Operation Log
+
+Every `sbx` and `docker` process the extension runs shall be visible in a **Sandbox
+Console** output channel while it runs, reachable via `Sandbox: Show Log`, the Sandboxes
+view's overflow menu, and a **Show Log** action on every error notification.
+
+* Each invocation is bracketed by a `$ <exe> <args…>` header and a
+  `→ exit <code> (<duration>)` footer; the child's output is streamed through verbatim,
+  so a multi-minute `docker build` is readable as it happens rather than only after it
+  ends. Every line carries an `[n]` invocation tag: operations on *different* sandboxes
+  run in parallel (FR-054 serialises one sandbox, not the machine) and their output
+  interleaves.
+* The most recent output line is also shown as the **progress notification's message**, so
+  the spinner reports what is happening (`#8 [4/9] RUN npm install`) instead of standing
+  still. Stages that move data while printing nothing (`docker save`, `sbx template load`)
+  announce themselves, so the box never sits on a stale line through a long silent step.
+* Discovery and probe calls (`sbx ls --json`, `template ls`, `--help`) run on focus
+  change and tree render and are logged **only when they fail** — which is a gain, since
+  several of those callers otherwise degrade silently.
+* Secret values never reach the channel (FR-032).
+
+---
+
+## FR-056 Cancellable Operations
+
+Long operations shall be cancellable from their progress notification.
+
+* Cancellable: the image build/refresh (`docker build --pull`, `docker pull`,
+  `sbx template load/rm`) and `sbx create` — the ones that pull images and take minutes.
+  `sbx stop` and `sbx rm` are **not** cancellable: interrupting them is strictly worse
+  than waiting the few seconds they take.
+* Cancelling **abandons the entire operation** — a cancelled build never falls through to
+  the recreate that follows it.
+* **Only `docker` children are killed.** An abandoned `docker build` leaves cache layers:
+  BuildKit finishes what it already started server-side, so a later rebuild is faster,
+  never corrupt, and there is nothing to undo.
+* **`sbx` children are never killed; a cancelled create is undone instead.** Cancelling
+  waits for `sbx create` to finish and then removes the sandbox (`sbx rm --force`),
+  returning to `absent` — the state the create started from. The end state is what the
+  user asked for, but a cancel can take as long as the create it undoes (a `--clone`
+  create keeps cloning to the end), so both the notification and the Explorer node say
+  *cancelling* for the whole wait. A rollback that cannot complete says so and names the
+  sandbox to remove by hand.
+* The report names the state left behind, because the middle of a Rebuild is not
+  undoable: cancelled during the build the sandbox is untouched; cancelled after the
+  removal, the previous instance is gone and Connect recreates it.
 
 ---
 

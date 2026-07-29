@@ -82,14 +82,18 @@ missing secrets via cached-entry picker/prompt, FR-032+FR-051), `blobs.ts` (per-
 secret cache: DPAPI blobs in `~/.sbx`, shared with the generated CLI — FR-051),
 `script.ts` (generated project CLI `.sandbox/scripts/sbx.sh`, FR-052 — written, never
 executed by the extension), `sandbox.ts` (recipe→refs + naming + lifecycle), `ops.ts`
-(per-sandbox create/attach/rebuild/shell shared by palette + Explorer), `terminal.ts`
+(per-sandbox create/attach/rebuild/shell shared by palette + Explorer; owns the progress
+spinners, the one-operation-per-sandbox guard FR-054 and cancellation FR-056),
+`log.ts` (operation log FR-055: the `Sandbox Console` channel + the spawn runner every
+sbx/docker call streams through — process plumbing only, no CLI strings), `terminal.ts`
 (native terminals driving sbx), `form.ts` (webview Configure form), `tree.ts` (Sandbox
 Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
-Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx}`;
-`ops → {images, secrets, sandbox, terminal, sbx}`;
-`tree → {ops, form, sandbox, config, identity, agents, sbx}`;
+Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx, log}`;
+`ops → {images, secrets, sandbox, terminal, sbx, log}`;
+`tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
 `secrets → {blobs, sandbox, services, sbx}`; `script → config`;
-`sandbox → {config, identity, sbx}`; nothing depends on `extension`.
+`sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`; `sbx → log`;
+nothing depends on `extension`.
 
 ## Binding UX invariants (not preferences)
 

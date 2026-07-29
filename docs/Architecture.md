@@ -68,27 +68,29 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `extension.ts` | Activation, palette commands, status bar item, silent startup discovery feeding it (Features §3, "Attach before Create"). Orchestrates the flows below. |
 | `config.ts` | Parses/writes the committed `.sandbox/config.yaml` recipe, incl. the project `name` (FR-009, §6). |
 | `identity.ts` | Reads/writes the **gitignored** `.sandbox/identity.yaml` — a short random `{id}` per working copy (FR-001, §6). |
-| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). |
+| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). Invocations run through `log.ts` (FR-055); the argument vectors stay here. |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
 | `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). |
 | `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
-| `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. |
+| `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054) and cancellation at stage boundaries (FR-056) — §12. |
+| `log.ts` | The operation log (FR-055): the `Sandbox Console` output channel plus the `spawn`-based runner every `sbx`/`docker` call goes through — streams child output to the channel and to the progress notification, and kills the child on cancel. Process plumbing only: it knows no CLI strings. |
 | `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. |
 | `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. |
 | `tree.ts` | Sandbox Explorer view + per-node commands (§12). |
 | `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. |
 
 Dependency direction (verified against imports):
-`extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx}`;
-`tree → {ops, form, sandbox, config, identity, agents, sbx}`;
+`extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx, log}`;
+`tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
 `form → {ops, secrets, sandbox, config, identity, agents, script, sbx}`;
-`ops → {images, secrets, sandbox, terminal, sbx}`;
+`ops → {images, secrets, sandbox, terminal, sbx, log}`;
 `terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
-`sandbox → {config, identity, sbx}`; `images → {config, sbx}`; `script → config`;
-`identity → config`.
-Nothing depends on `extension`; `config`, `agents`, `services`, and `blobs` are leaves.
+`sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`;
+`sbx → log`; `script → config`; `identity → config`.
+Nothing depends on `extension`; `config`, `agents`, `services`, `blobs`, and `log` are
+leaves.
 
 `sbx.ts` shapes all child-process `sbx` invocations; `terminal.ts` additionally builds
 the interactive `run`/`exec` argument vectors used as terminal `shellArgs` — CLI strings
@@ -385,6 +387,36 @@ the new image → re-attach — behind a progress indicator. The host workspace 
 mount, so in-progress work survives the recreate; only image-baked tooling is refreshed.
 (When the recipe has no custom image, "Rebuild" degrades to a plain Recreate.)
 
+**Cancellation is per stage, and the stage decides the story (FR-056).** The pipeline's
+long stages — the image build/refresh and `sbx create` — are cancellable; the
+terminal-disposal + `sbx rm` stage in the middle is not, because interrupting it is worse
+than waiting out the few seconds it takes. Cancelling any stage abandons the *whole*
+rebuild (the cancellation propagates instead of falling through to the next stage), and
+the message names what was left behind — untouched before the removal, "the previous
+instance is gone, Connect recreates it" after it.
+
+**Kill only what is safe to kill.** Killing a CLI does not stop its backend, and the two
+backends leave incomparable residues.
+
+- **`docker` children are killed.** BuildKit finishes what it already started
+  server-side; the layers land in the cache, so a later rebuild is faster, never corrupt.
+  Nothing to undo.
+- **`sbx` children are never killed** (`sbx.run` sets `killOnCancel: false` for every
+  invocation). Verified live: killing `sbx create` during its *Configuring Docker* step
+  left a network inside the sbx runtime that nothing can remove — the sandbox record was
+  gone (`sbx rm` → "not found"), yet every later create under that name failed with
+  `failed to create network: already exists`. The runtime's docker daemon is not the
+  host's, so the network is unreachable from outside, and the only tool that clears it is
+  `sbx reset`, which destroys every sandbox on the machine. **A permanently poisoned
+  sandbox name is far worse than a slow cancel.**
+
+So cancelling an sbx operation means *let it finish, then undo it*:
+`ops.rollbackCreate` removes the completed sandbox with `sbx rm --force` — a clean
+removal, because sbx itself finished and knows every resource it made — returning to
+`absent`. The progress box switches to "Cancelling…" the moment the button is pressed, so
+the wait is not mistaken for an ignored click. A rollback that cannot complete reports the
+sandbox name for manual removal rather than claiming success.
+
 ## 12. Explorer actions & lifecycle
 
 **State-gated node actions.** The Explorer surfaces only the actions valid for a node's
@@ -396,6 +428,7 @@ instance) → absent → Remove from config:
 | running | Stop · Connect · *(Shell in the context menu)* |
 | stopped | Connect · Edit · Delete instance · *(Rebuild in the context menu)* |
 | absent (defined, no instance) | Connect (creates the instance) · Edit · Remove from config |
+| busy (transient — an operation is in flight, FR-054) | none |
 
 Two distinct deletes: **Delete instance** (`sbx rm`, keeps the recipe — recreatable;
 shown when stopped; runs **before** the recipe entry is touched) vs **Remove from
@@ -405,15 +438,41 @@ error node that opens the file — never as an empty "No sandboxes yet" tree.
 
 **Every slow lifecycle action surfaces a progress notification.** Create, Stop, Delete
 instance, and Recreate each run their `sbx` call (and the preceding terminal disposal,
-which can take up to ~4s) behind a non-cancellable notification spinner — the same box
-Rebuild-image already showed — so clicking any action gives instant "something is
-happening" feedback rather than a silent gap. All lifecycle ops route through `ops.ts`,
-which owns the spinners (`withProgress`), so palette, Explorer, and form callers behave
-identically. The one carve-out: interactive secret entry (FR-032) is kept **outside** the
-spinner — a progress box must never compete with a modal input — so the order is always
-*build/create behind a spinner → prompt for secrets → attach a terminal*. Terminal-based
-attach/resume (`sbx run`) and shells (`sbx exec`) need no separate spinner: the terminal
-opens immediately and is its own progress surface.
+which can take up to ~4s) behind a notification spinner, so clicking any action gives
+instant "something is happening" feedback rather than a silent gap. All lifecycle ops
+route through `ops.ts`, which owns the spinners (`withProgress`), so palette, Explorer,
+and form callers behave identically. The one carve-out: interactive secret entry (FR-032)
+is kept **outside** the spinner — a progress box must never compete with a modal input —
+so the order is always *build/create behind a spinner → prompt for secrets → attach a
+terminal*. Terminal-based attach/resume (`sbx run`) and shells (`sbx exec`) need no
+separate spinner: the terminal opens immediately and is its own progress surface.
+
+**The spinner reports, and can be stopped.** `withProgress` hands its task an
+`OpContext` (`log.ts`): `onLine` pushes the running child's latest output line into the
+notification message (FR-055), and `token` — set only for the cancellable operations —
+kills the child on cancel (FR-056, §11). The same stream feeds the `Sandbox Console`
+channel, which is where the full output lives; every error notification and the busy
+warning offer **Show Log** to open it. Discovery/probe calls are logged only when they
+fail, and the secret path (`secret set`, `gh auth login`) logs its header and exit code
+but never its output (FR-032).
+
+**One operation per sandbox (FR-054).** `ops.ts` holds an in-flight registry keyed by sbx
+name; every lifecycle entry point runs through it, and a second action on a busy sandbox
+is declined with the name of what is running rather than queued behind it. Because the
+guard sits below the callers, the palette, the Explorer, and the form cannot drift apart
+— which is how a doubled Rebuild used to start two pipelines against one sandbox name.
+Distinct sandboxes stay independent. Two consequences worth knowing: "Remove from config"
+treats a *declined* destroy exactly like a failed one and keeps the recipe entry (never
+orphan a live microVM), and the New/Edit form disables its **Save** for the duration of a
+save, restoring it only if the save fails with the panel still open.
+
+A busy node renders as `sandbox.busy` (spinner icon, the operation as its description),
+which matches none of the menus' `when` clauses, so its actions disappear until the
+operation ends; `ops.onDidChangeBusy` re-renders the tree on the click rather than on the
+next focus change. The state-gated table above therefore has a fourth, transient row.
+Pressing Cancel relabels the node to *cancelling* as well as the notification: an sbx
+child runs to completion after the click (§11), so a node still reading *connect…* through
+a minutes-long `--clone` create reads as a hang and contradicts the box beside it.
 
 **Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
 display-only, **never** part of the key, sbx name, file names, or image tags, so it is
@@ -484,5 +543,21 @@ re-encoding these rules as prose and calls subcommands instead
   commit from the host); *(b) `sbx --clone`* — sandbox-managed private clone, work
   retrieved via the `sandbox-<name>` git remote. Worktrees fit the model best. Cost in
   both: N microVMs = N×RAM, and a picker UI.
+- **An interrupted sbx cleanup leaks the sandbox name — upstream, unfixed.** If sbx's
+  cleanup stops after it deletes its runtime entry but before the container/network/volume
+  are gone, the name stays claimed inside the runtime: `sbx rm` answers *"not found"*
+  while every later `create` under it fails with
+  `sandboxd error: status 500: failed to create network: … already exists`. The runtime's
+  docker daemon is not the host's, so the leaked network is unreachable from outside, and
+  `sbx diagnose` passes without noticing. Open upstream:
+  [#129](https://github.com/docker/sbx-releases/issues/129),
+  [#181](https://github.com/docker/sbx-releases/issues/181),
+  [#353](https://github.com/docker/sbx-releases/issues/353) — no released fix as of
+  v0.31.3; the only documented recovery is `sbx reset` (destroys every sandbox on the
+  machine), the alternative being bbolt surgery on three internal DBs (#129).
+  **This is why cancel never kills an sbx child** (§11): interrupting sbx mid-cleanup is
+  exactly the trigger. It is reachable without this extension too — a `sbx stop` that
+  outruns the CLI's own 120s timeout does it. `sbx.explainCreateFailure` recognises the
+  error and tells the user to change the sandbox's `key` rather than leaving a raw 500.
 - **Deferred scope**: filesystem/network policy UIs (Features §12), MCP endpoints
   (Features §13), kit injection (§7).

@@ -1,9 +1,7 @@
-import { execFile, spawn } from "child_process";
-import { promisify } from "util";
+import { ChildProcessWithoutNullStreams, spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
-
-const pexec = promisify(execFile);
+import * as log from "./log";
 
 let cachedPath: string | undefined;
 
@@ -32,24 +30,30 @@ export function sbxPath(): string {
   return cachedPath;
 }
 
-interface RunResult {
-  stdout: string;
-  stderr: string;
-  code: number;
+type RunResult = log.RunResult;
+
+/**
+ * Every sbx invocation goes through the operation log (FR-055), which streams the child's
+ * output while it runs. Discovery/probe calls pass `quiet: true`: they fire on focus
+ * change and tree render, so only their failures are logged.
+ *
+ * FR-056: an sbx child is **never killed on cancel**. Verified live — killing `sbx create`
+ * during "Configuring Docker" left a network inside the sbx runtime that nothing can
+ * remove: the sandbox record was gone (`sbx rm` → "not found"), yet every later create
+ * under that name failed with `failed to create network: already exists`. The runtime's
+ * docker daemon is not the host's, so the network is unreachable from outside, and the
+ * only tool that clears it is `sbx reset`, which destroys every sandbox on the machine.
+ * A poisoned sandbox name is far worse than a slow cancel, so cancelling waits for the
+ * command to finish and the caller undoes the completed work (`ops.rollbackCreate`).
+ * Killing stays enabled for `docker` calls (`images.ts`), whose residue is cache layers.
+ */
+function run(args: string[], opts?: log.RunOptions): Promise<RunResult> {
+  return log.run(sbxPath(), args, { ...opts, killOnCancel: false });
 }
 
-function run(args: string[]): Promise<RunResult> {
-  return pexec(sbxPath(), args, { windowsHide: true, maxBuffer: 4 * 1024 * 1024 })
-    .then(({ stdout, stderr }) => ({
-      stdout: stdout.toString(),
-      stderr: stderr.toString(),
-      code: 0,
-    }))
-    .catch((err: NodeJS.ErrnoException & { stdout?: Buffer; stderr?: Buffer }) => ({
-      stdout: err.stdout?.toString() ?? "",
-      stderr: err.stderr?.toString() ?? err.message,
-      code: typeof err.code === "number" ? err.code : 1,
-    }));
+/** Discovery/probe shorthand — logged only on failure. */
+function probe(args: string[]): Promise<RunResult> {
+  return run(args, { quiet: true });
 }
 
 /**
@@ -106,7 +110,7 @@ export function assertSecretService(service: string): string {
 
 /** True if the sbx CLI is invokable (does not imply the user is signed in). */
 export async function available(): Promise<boolean> {
-  const { code } = await run(["version"]);
+  const { code } = await probe(["version"]);
   return code === 0;
 }
 
@@ -120,7 +124,7 @@ export interface SandboxInfo {
 
 /** Parse `sbx ls --json` (FR-002 discovery). Throws on CLI failure. */
 export async function list(): Promise<SandboxInfo[]> {
-  const { stdout, stderr, code } = await run(["ls", "--json"]);
+  const { stdout, stderr, code } = await probe(["ls", "--json"]);
   if (code !== 0) {
     throw new Error(stderr.trim() || "sbx ls failed");
   }
@@ -153,8 +157,13 @@ export interface CreateOpts {
   image?: string;
 }
 
-/** Create a sandbox without attaching (FR-003). */
-export async function create(opts: CreateOpts): Promise<void> {
+/** Create a sandbox without attaching (FR-003). Long (it may pull the image), so it takes
+ * an operation context: its output drives the progress message and it is cancellable
+ * (FR-055/FR-056). */
+export async function create(
+  opts: CreateOpts,
+  ctx?: log.OpContext
+): Promise<void> {
   const args = ["create", "--name", assertSandboxName(opts.name)];
   if (opts.clone) {
     args.push("--clone");
@@ -163,10 +172,34 @@ export async function create(opts: CreateOpts): Promise<void> {
     args.push("-t", assertImageTag(opts.image));
   }
   args.push(assertAgentId(opts.agent), opts.workspace);
-  const { stderr, code } = await run(args);
+  const { stderr, code } = await run(args, ctx);
   if (code !== 0) {
-    throw new Error(stderr.trim() || `sbx create failed for ${opts.name}`);
+    const message = stderr.trim() || `sbx create failed for ${opts.name}`;
+    throw new Error(explainCreateFailure(opts.name, message));
   }
+}
+
+/**
+ * Turn one sbx failure that is otherwise a dead end into something actionable. When a
+ * cleanup is interrupted after sbx deletes its runtime entry but before the container /
+ * network / volume are gone, the name stays claimed inside the runtime forever: `sbx rm`
+ * answers "not found" while every create under it fails with a 500. That is an open
+ * upstream bug (docker/sbx-releases#129, #181, #353), reachable without this extension —
+ * a `sbx stop` that outruns the CLI's own timeout does it too — and its only documented
+ * recovery is `sbx reset`, which destroys every sandbox on the machine. Say so, and point
+ * at the cheap way out first.
+ */
+function explainCreateFailure(name: string, message: string): string {
+  if (!/failed to create (network|container).*already exists/i.test(message)) {
+    return message;
+  }
+  return (
+    `${message}\n\nThe sandbox name "${name}" is still claimed inside the sbx runtime by ` +
+    "leaked state — a known sbx bug (docker/sbx-releases#129) with no released fix. The " +
+    "name cannot be reused: change this sandbox's `key` in .sandbox/config.yaml to create " +
+    "it under a new name, or run `sbx reset` to clear all sbx state (this destroys every " +
+    "sandbox on the machine)."
+  );
 }
 
 /** Stop a sandbox, retaining all state; resume later with `sbx run` (FR-006). */
@@ -240,7 +273,7 @@ function parseHelpList(label: string, text: string): string[] {
  * always matches the local version; falls back to the static list if discovery fails.
  */
 export async function listAgents(): Promise<string[]> {
-  const { stdout, stderr, code } = await run(["run", "--help"]);
+  const { stdout, stderr, code } = await probe(["run", "--help"]);
   if (code === 0) {
     const found = parseHelpList("Available agents", stdout + "\n" + stderr);
     if (found.length > 0) {
@@ -255,7 +288,7 @@ export async function listAgents(): Promise<string[]> {
  * falls back to the static list if discovery fails. Drives the Secrets tab (FR-032).
  */
 export async function listSecretServices(): Promise<string[]> {
-  const { stdout, stderr, code } = await run(["secret", "set", "--help"]);
+  const { stdout, stderr, code } = await probe(["secret", "set", "--help"]);
   if (code === 0) {
     const found = parseHelpList("Available services", stdout + "\n" + stderr);
     if (found.length > 0) {
@@ -266,8 +299,11 @@ export async function listSecretServices(): Promise<string[]> {
 }
 
 /** Load a template image tar into the sbx runtime image store (FR-008). */
-export async function templateLoad(tarPath: string): Promise<void> {
-  const { stderr, code } = await run(["template", "load", tarPath]);
+export async function templateLoad(
+  tarPath: string,
+  ctx?: log.OpContext
+): Promise<void> {
+  const { stderr, code } = await run(["template", "load", tarPath], ctx);
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx template load failed for ${tarPath}`);
   }
@@ -275,7 +311,7 @@ export async function templateLoad(tarPath: string): Promise<void> {
 
 /** True if a template tagged <repo>:<tag> is present in the sbx store. */
 export async function templateExists(imageTag: string): Promise<boolean> {
-  const { stdout, code } = await run(["template", "ls"]);
+  const { stdout, code } = await probe(["template", "ls"]);
   if (code !== 0) {
     return false;
   }
@@ -309,7 +345,7 @@ export interface TemplateInfo {
  * failure so callers can tell "store is empty" from "listing failed".
  */
 export async function templateList(): Promise<TemplateInfo[] | null> {
-  const { stdout, code } = await run(["template", "ls"]);
+  const { stdout, code } = await probe(["template", "ls"]);
   if (code !== 0) {
     return null;
   }
@@ -329,8 +365,11 @@ export async function templateList(): Promise<TemplateInfo[] | null> {
  * Only for registry-pullable images (the docker/sandbox-templates defaults) — removing a
  * local-only template would be unrecoverable.
  */
-export async function templateRemove(tag: string): Promise<void> {
-  const { stderr, code } = await run(["template", "rm", assertImageTag(tag)]);
+export async function templateRemove(
+  tag: string,
+  ctx?: log.OpContext
+): Promise<void> {
+  const { stderr, code } = await run(["template", "rm", assertImageTag(tag)], ctx);
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx template rm failed for ${tag}`);
   }
@@ -345,7 +384,7 @@ export interface SecretEntry {
 
 /** Parse `sbx secret ls` to learn which secrets exist and at what scope (FR-032). */
 export async function listSecrets(): Promise<SecretEntry[]> {
-  const { stdout, code } = await run(["secret", "ls"]);
+  const { stdout, code } = await probe(["secret", "ls"]);
   if (code !== 0) {
     return [];
   }
@@ -363,18 +402,42 @@ export async function listSecrets(): Promise<SecretEntry[]> {
   return entries;
 }
 
-/** Run sbx with a value piped on stdin (keeps secrets out of argv/shell history). */
+/**
+ * Run sbx with a value piped on stdin (keeps secrets out of argv/shell history). This is
+ * the one path that deliberately does NOT stream through the operation log: the header is
+ * recorded so the log shows that a secret was provisioned, but neither the piped value nor
+ * the child's output ever reaches the channel (FR-032 — never in argv, never in an env
+ * var, never in the log). Failures still surface to the user as a thrown error.
+ */
 function runWithStdin(args: string[], input: string): Promise<RunResult> {
+  const done = log.opaqueCommand(sbxPath(), args);
   return new Promise((resolve) => {
-    const child = spawn(sbxPath(), args, { windowsHide: true });
     let stdout = "";
     let stderr = "";
+    // A failed spawn emits "error" and then "close"; settle on whichever comes first, or
+    // the log gets two exit lines for one command. Same guard as log.run.
+    let settled = false;
+    const finish = (code: number, message?: string): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      // Exit code only — enough to see in the log that it ran and whether it worked.
+      done(code);
+      resolve({ stdout, stderr: stderr || message || "", code });
+    };
+
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(sbxPath(), args, { windowsHide: true });
+    } catch (err) {
+      finish(1, err instanceof Error ? err.message : String(err));
+      return;
+    }
     child.stdout.on("data", (d) => (stdout += d.toString()));
     child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("error", (err) =>
-      resolve({ stdout, stderr: stderr || err.message, code: 1 })
-    );
-    child.on("close", (code) => resolve({ stdout, stderr, code: code ?? 1 }));
+    child.on("error", (err) => finish(1, err.message));
+    child.on("close", (code) => finish(code ?? 1));
     child.stdin.on("error", () => undefined); // ignore EPIPE if the process exits early
     child.stdin.write(input);
     child.stdin.end();
@@ -439,7 +502,7 @@ export async function sandboxHasCommand(
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(cmd)) {
     throw new Error(`invalid command name "${cmd}"`);
   }
-  const { code } = await run([
+  const { code } = await probe([
     "exec",
     assertSandboxName(name),
     "bash",

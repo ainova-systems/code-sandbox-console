@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { readConfig, SandboxSpec } from "./config";
 import { SandboxIdentity } from "./identity";
+import * as log from "./log";
 import * as sbx from "./sbx";
 
 /**
@@ -124,14 +125,21 @@ export function destroy(sandbox: SandboxRef): Promise<void> {
 }
 
 /** Create the sandbox without attaching (used before opening a shell). */
-export function create(sandbox: SandboxRef, workspace: string): Promise<void> {
-  return sbx.create({
-    name: sandbox.name,
-    agent: sandbox.spec.agent,
-    workspace,
-    clone: sandbox.spec.mount === "clone",
-    image: sandbox.spec.image,
-  });
+export function create(
+  sandbox: SandboxRef,
+  workspace: string,
+  ctx?: log.OpContext
+): Promise<void> {
+  return sbx.create(
+    {
+      name: sandbox.name,
+      agent: sandbox.spec.agent,
+      workspace,
+      clone: sandbox.spec.mount === "clone",
+      image: sandbox.spec.image,
+    },
+    ctx
+  );
 }
 
 export function workspacePath(): string | undefined {

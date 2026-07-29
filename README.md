@@ -60,7 +60,13 @@ Command Palette, category **Sandbox**:
 | `Sandbox: Switch Sandbox` | Pick the active sandbox |
 | `Sandbox: New Sandbox` | Open the New Sandbox form |
 | `Sandbox: Manage Cached Secrets` | List, rename, delete cached secret entries |
+| `Sandbox: Show Log` | Open the operation log — every `sbx`/`docker` call, streamed live |
 | `Sandbox: Refresh` | Re-run discovery |
+
+Long operations (image builds, creates) stream their output into both the progress
+notification and the log, and can be cancelled from the notification. Only one operation
+runs per sandbox at a time — a second click reports what is already running instead of
+starting a duplicate.
 
 Explorer per-node actions: Connect, Stop, Shell, Rebuild, Edit, Delete instance, Remove
 from config.
