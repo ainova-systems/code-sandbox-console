@@ -470,6 +470,9 @@ A busy node renders as `sandbox.busy` (spinner icon, the operation as its descri
 which matches none of the menus' `when` clauses, so its actions disappear until the
 operation ends; `ops.onDidChangeBusy` re-renders the tree on the click rather than on the
 next focus change. The state-gated table above therefore has a fourth, transient row.
+Pressing Cancel relabels the node to *cancelling* as well as the notification: an sbx
+child runs to completion after the click (§11), so a node still reading *connect…* through
+a minutes-long `--clone` create reads as a hang and contradicts the box beside it.
 
 **Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
 display-only, **never** part of the key, sbx name, file names, or image tags, so it is

@@ -115,7 +115,7 @@ function trimForNotification(line: string): string {
 async function withProgress<T>(
   title: string,
   task: (ctx: log.OpContext) => Promise<T>,
-  opts?: { cancellable?: boolean }
+  opts?: { cancellable?: boolean; busyFor?: string; cancelNote?: string }
 ): Promise<T> {
   const cancellable = opts?.cancellable ?? false;
   return vscode.window.withProgress(
@@ -140,7 +140,15 @@ async function withProgress<T>(
       };
       const cancelNote = ctx.token?.onCancellationRequested(() => {
         cancelling = true;
-        progress.report({ message: "Cancelling…" });
+        progress.report({ message: opts?.cancelNote ?? "Cancelling…" });
+        // Relabel the Explorer node too. An sbx child runs to completion after the click
+        // (see sbx.run), and a `--clone` create can take minutes to get there — a node
+        // still reading "connect…" through that reads as a hang, and contradicts the
+        // notification standing right next to it.
+        if (opts?.busyFor && inFlight.has(opts.busyFor)) {
+          inFlight.set(opts.busyFor, "Cancelling");
+          busyChanged.fire();
+        }
       });
       let result: T;
       try {
@@ -219,7 +227,13 @@ async function createSandbox(
     await withProgress(
       `Creating sandbox ${ref.name}…`,
       (ctx) => sandbox.create(ref, workspace, ctx),
-      { cancellable: true }
+      {
+        cancellable: true,
+        busyFor: ref.name,
+        // Say why this one does not stop at once: the create is left to finish (sbx.run)
+        // and a `--clone` create can spend minutes cloning before it gets there.
+        cancelNote: "Cancelling — letting the create finish so it can be removed cleanly…",
+      }
     );
   } catch (err) {
     throw err instanceof Cancelled ? new Cancelled(await rollbackCreate(ref)) : err;
@@ -276,7 +290,7 @@ export async function ensureImageForRef(
   await withProgress(
     `${rebuild ? "Rebuilding" : "Building"} image ${ref.spec.image}…`,
     (ctx) => images.ensureImage(ref.spec, repoRoot, { rebuild, ctx }),
-    { cancellable: true }
+    { cancellable: true, busyFor: ref.name }
   );
 }
 
@@ -390,7 +404,7 @@ export async function rebuildRef(
         const fresh = await withProgress(
           `Refreshing image for ${ref.name}…`,
           (ctx) => images.refreshForRebuild(ref.spec, ctx),
-          { cancellable: true }
+          { cancellable: true, busyFor: ref.name }
         );
         if (!fresh) {
           void vscode.window.showWarningMessage(

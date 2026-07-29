@@ -648,7 +648,8 @@ flight per sandbox at any time, and the UI that starts one shall show that it is
   never orphaned.
 * **A busy sandbox looks busy.** Its Explorer node shows a spinner and the running
   operation, and its actions are hidden for the duration — the guard would decline them
-  anyway, and an action you can click but not use is a lie about the state.
+  anyway, and an action you can click but not use is a lie about the state. Once cancel is
+  pressed the node says *cancelling*, since the work can outlive the click (FR-056).
 * The New/Edit form's **Save** disables itself and the rest of the form for the duration
   of the save, showing the running phase (*Creating…* / *Applying…*), and is handed back
   if the save fails with the panel still open.
@@ -696,8 +697,10 @@ Long operations shall be cancellable from their progress notification.
 * **`sbx` children are never killed; a cancelled create is undone instead.** Cancelling
   waits for `sbx create` to finish and then removes the sandbox (`sbx rm --force`),
   returning to `absent` — the state the create started from. The end state is what the
-  user asked for, but a cancel can take as long as the create it undoes. A rollback that
-  cannot complete says so and names the sandbox to remove by hand.
+  user asked for, but a cancel can take as long as the create it undoes (a `--clone`
+  create keeps cloning to the end), so both the notification and the Explorer node say
+  *cancelling* for the whole wait. A rollback that cannot complete says so and names the
+  sandbox to remove by hand.
 * The report names the state left behind, because the middle of a Rebuild is not
   undoable: cancelled during the build the sandbox is untouched; cancelled after the
   removal, the previous instance is gone and Connect recreates it.

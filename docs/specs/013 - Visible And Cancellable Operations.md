@@ -62,6 +62,13 @@ rather than on the next focus change. Manual acceptance is what asked for this: 
 already declined the clicks, but the actions still *looked* available, and an action you
 can click but not use is a lie about the state.
 
+Acceptance then caught the same class of lie one level down. Cancelling a Connect left the
+node reading *connect…* for the whole time the `--clone` create kept cloning, while the
+notification beside it already said *Cancelling — removing …*; the operation was correct
+(the sandbox was created, then removed) but the tree looked hung. Pressing Cancel now
+relabels the in-flight entry to *Cancelling*, and the create's box explains why it is not
+instant: "letting the create finish so it can be removed cleanly".
+
 The webview form got the same treatment: on submit, **Save** is disabled and
 relabelled to the running phase (*Creating…* / *Applying…*), the rest of the form is
 disabled with it, and an inline status line replaces the silent wait. Cancel is disabled
