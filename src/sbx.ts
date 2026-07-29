@@ -196,9 +196,10 @@ function explainCreateFailure(name: string, message: string): string {
   return (
     `${message}\n\nThe sandbox name "${name}" is still claimed inside the sbx runtime by ` +
     "leaked state — a known sbx bug (docker/sbx-releases#129) with no released fix. The " +
-    "name cannot be reused: change this sandbox's `key` in .sandbox/config.yaml to create " +
-    "it under a new name, or run `sbx reset` to clear all sbx state (this destroys every " +
-    "sandbox on the machine)."
+    "name cannot be reused: give this sandbox a new, distinctive `key` in " +
+    ".sandbox/config.yaml — not a bare agent name like `claude`, because new sandboxes " +
+    "take those and would land on this same name again. Or run `sbx reset` to clear all " +
+    "sbx state (this destroys every sandbox on the machine)."
   );
 }
 

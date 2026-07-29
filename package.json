@@ -2,7 +2,7 @@
   "name": "sandbox-console",
   "displayName": "Sandbox Console",
   "description": "Run AI coding agents (Claude Code, Codex, Gemini, …) in isolated, persistent Docker Sandboxes (sbx microVMs) — terminal-first, from a Sandbox Explorer, with no manual container management.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "ainova-systems",
   "license": "MIT",
   "author": {
