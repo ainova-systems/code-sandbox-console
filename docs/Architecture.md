@@ -76,21 +76,22 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
 | `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054) and cancellation at stage boundaries (FR-056) — §12. |
 | `log.ts` | The operation log (FR-055): the `Sandbox Console` output channel plus the `spawn`-based runner every `sbx`/`docker` call goes through — streams child output to the channel and to the progress notification, and kills the child on cancel. Process plumbing only: it knows no CLI strings. |
+| `names.ts` | The per-working-copy record of sbx names that can no longer be created (FR-057, §14): `workspaceState`-backed, written when a create fails with the leaked-state error, read by key derivation. Local by construction — it never reaches the committed recipe. |
 | `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. |
 | `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. |
 | `tree.ts` | Sandbox Explorer view + per-node commands (§12). |
 | `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. |
 
 Dependency direction (verified against imports):
-`extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx, log}`;
+`extension → {ops, form, tree, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
 `tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
-`form → {ops, secrets, sandbox, config, identity, agents, script, sbx}`;
-`ops → {images, secrets, sandbox, terminal, sbx, log}`;
+`form → {ops, secrets, sandbox, config, identity, agents, names, script, sbx}`;
+`ops → {images, secrets, sandbox, terminal, names, sbx, log}`;
 `terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
 `sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`;
 `sbx → log`; `script → config`; `identity → config`.
-Nothing depends on `extension`; `config`, `agents`, `services`, `blobs`, and `log` are
-leaves.
+Nothing depends on `extension`; `config`, `agents`, `services`, `blobs`, `names`, and
+`log` are leaves.
 
 `sbx.ts` shapes all child-process `sbx` invocations; `terminal.ts` additionally builds
 the interactive `run`/`exec` argument vectors used as terminal `shellArgs` — CLI strings
@@ -193,6 +194,23 @@ digits, `.`, `+`, `-`), must start with a letter/digit, and fall back to `sandbo
 nothing usable remains (e.g. a fully non-ASCII folder name) — so any folder name yields a
 valid sandbox name.
 
+**Key derivation (FR-057).** A new sandbox's `key` is seeded from the title entered in the
+form (`Backend API (v2)` → `backend-api-v2`, capped at 40 chars), falling back to the agent
+id when nothing usable remains, and then **frozen** — the form locks it in edit mode, so a
+later rename never moves a sandbox name, Dockerfile, or image tag. The candidate is skipped
+if the key is already in the recipe or if its sbx name is recorded unusable (`names.ts`,
+§14); the suffix (`-2`, `-3`, …) resolves genuine collisions. Because the default Dockerfile
+name follows the key, two sandboxes on one agent no longer share `claude.Dockerfile` by
+accident — sharing is expressed by typing the same file name in both.
+
+**The recipe is watched, not snapshotted (FR-009).** `config.yaml` is committed and edited
+by hand, by a git pull, or by another window, while the tree and the status bar resolve
+their refs at render time. `extension.ts` therefore holds a `FileSystemWatcher` over
+`.sandbox/*.yaml` that (debounced) refreshes the status bar and fires
+`sandboxConsole.refresh`, dropping the tree's cached refs. Watching keeps discovery
+event-driven and silent (FR-002; a timer would reintroduce background `sbx ls` traffic for
+a file that changes rarely), and the watcher only observes — it never writes.
+
 ## 7. Custom images: templates & kits
 
 `sbx` has **no native Dockerfile build**; custom environments come from two official,
@@ -233,8 +251,9 @@ only; kit injection (`sbx kit add`) is the natural follow-up for live environmen
 
 **Instance-first New/Edit (the user edits a sandbox, not a file).** The Explorer drives a
 webview: **New Sandbox** (`sandboxConsole.newSandbox`, the `+` in the view title) creates
-one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display label
-only — the key derives from the agent id, so a rename never touches names/images),
+one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (display label; it
+seeds the key once at creation and never tracks it afterwards, so a rename never touches
+names/images — FR-057, §6),
 **Agent**, **Group** (organises the tree
 into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
 **Advanced** (Environment: Default / Custom Dockerfile / Custom image; published ports as
@@ -475,10 +494,11 @@ child runs to completion after the click (§11), so a node still reading *connec
 a minutes-long `--clone` create reads as a hang and contradicts the box beside it.
 
 **Title & Group (organising).** A spec may carry `title` (Explorer/status-bar label —
-display-only, **never** part of the key, sbx name, file names, or image tags, so it is
-safe to rename at any time) and `group` (folders the tree). New-sandbox keys derive from
-the agent id (`claude`, `claude-2`, …). Groups are organisational today and the natural
-hook for per-group governance (`sbx --profile`) later.
+display-only: it is read **once**, to seed a new sandbox's key, and never tracks it
+afterwards, so renaming a title is always safe for the sbx name, file names, and image
+tags) and `group` (folders the tree). New-sandbox keys derive from the title, falling back
+to the agent id (FR-057, §6). Groups are organisational today and the natural hook for
+per-group governance (`sbx --profile`) later.
 
 **Status bar & the active sandbox (FR-050).** The status bar item shows the *active*
 sandbox by display name (`title || key`) with its state icon; the agent is in the
@@ -557,7 +577,12 @@ re-encoding these rules as prose and calls subcommands instead
   machine), the alternative being bbolt surgery on three internal DBs (#129).
   **This is why cancel never kills an sbx child** (§11): interrupting sbx mid-cleanup is
   exactly the trigger. It is reachable without this extension too — a `sbx stop` that
-  outruns the CLI's own 120s timeout does it. `sbx.explainCreateFailure` recognises the
-  error and tells the user to change the sandbox's `key` rather than leaving a raw 500.
+  outruns the CLI's own 120s timeout does it. `sbx.ts` recognises the error, raises it as
+  a typed `NameClaimedError` explaining the way out rather than a raw 500, and `ops.ts`
+  records the dead name in `names.ts` so key derivation can never hand it out again
+  (FR-057). Remembering the observed failure is the only option available: sbx cannot be
+  asked whether a name is claimed — `sbx ls` does not list it and `sbx rm` reports
+  "not found". The record is local (`workspaceState`), stores names only, and becomes
+  irrelevant after a `sbx reset`.
 - **Deferred scope**: filesystem/network policy UIs (Features §12), MCP endpoints
   (Features §13), kit injection (§7).

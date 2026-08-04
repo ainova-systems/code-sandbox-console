@@ -10,6 +10,7 @@ import {
   writeConfig,
 } from "./config";
 import { ensureIdentity } from "./identity";
+import * as names from "./names";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
@@ -203,20 +204,38 @@ async function apply(
   if (mode.kind === "edit") {
     key = mode.key;
     agent = oldSpec?.agent ?? payload.agent;
-  } else if (pinned.key && config.sandboxes.some((s) => s.key === pinned.key)) {
+  } else if (
+    pinned.key &&
+    config.sandboxes.some((s) => s.key === pinned.key) &&
+    // FR-057: unless the previous attempt is what taught us the name is unusable — reusing
+    // it would fail identically, which is the loop this requirement exists to break.
+    !names.isUnusable(sandbox.sandboxName(projectName, pinned.key, identity.id))
+  ) {
     // Retry after a failed create: the entry is already persisted — update it
     // in place instead of appending a duplicate "<key>-2".
     key = pinned.key;
     agent = payload.agent;
   } else {
-    // The key is the stable technical id (sbx name, file names, image tags). It is
-    // deliberately NOT derived from the title — the title is a display label the
-    // user may rename at any time without touching instances or images.
+    // FR-057: the key is the stable technical id (sbx name, file names, image tags), so it
+    // is seeded ONCE — from the title the user just typed, falling back to the agent id
+    // when the title is empty or sanitises away — and frozen from then on: the form locks
+    // it in edit mode, so renaming a title never touches a sandbox name, Dockerfile or
+    // image tag. The invariant is that the key must not *track* the title; seeding it once
+    // does not violate that, and it stops sandbox names reading `<project>-claude-2-<id>`.
     agent = payload.agent;
-    key = agent;
+    const base = keyFromTitle(payload.title) ?? agent;
     const used = new Set(config.sandboxes.map((s) => s.key));
-    for (let n = 2; used.has(key); n++) {
-      key = `${agent}-${n}`;
+    key = base;
+    // Skip keys already in the recipe AND keys whose sbx name is known to be unusable
+    // (FR-057): a name freed by a rename/removal used to be handed straight back to the
+    // next sandbox, which is how a create walked back into a permanently claimed name.
+    for (
+      let n = 2;
+      used.has(key) ||
+      names.isUnusable(sandbox.sandboxName(projectName, key, identity.id));
+      n++
+    ) {
+      key = `${base}-${n}`;
     }
   }
 
@@ -281,10 +300,20 @@ async function apply(
   // argv allowlists must fail the save, not poison the committed recipe.
   const ref = sandbox.ref(projectName, spec, identity.id);
 
-  const exists = config.sandboxes.some((s) => s.key === key);
+  // FR-057: a retry that had to abandon its pinned key (its sbx name turned out to be
+  // permanently claimed) drops the dead entry — nothing was ever created under it, so
+  // keeping it would only leave the recipe carrying a definition that cannot be built.
+  const abandoned =
+    mode.kind === "new" && pinned.key && pinned.key !== key
+      ? pinned.key
+      : undefined;
+  const entries = abandoned
+    ? config.sandboxes.filter((s) => s.key !== abandoned)
+    : config.sandboxes;
+  const exists = entries.some((s) => s.key === key);
   let sandboxes = exists
-    ? config.sandboxes.map((s) => (s.key === key ? spec : s))
-    : [...config.sandboxes, spec];
+    ? entries.map((s) => (s.key === key ? spec : s))
+    : [...entries, spec];
   if (spec.default) {
     // Single default per recipe (FR-050): the other entries lose the flag.
     sandboxes = sandboxes.map((s) =>
@@ -356,6 +385,28 @@ class HandledError extends Error {}
  * components. No path separators and no leading "." — that is what makes traversal
  * impossible; uppercase/underscore are fine (image tags are tagSafe()d separately). */
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** A key derived from a title stays readable in a sandbox name; a pasted sentence does not. */
+const KEY_MAX = 40;
+
+/**
+ * FR-057: seed a new sandbox's key from its title — `Backend API (v2)` → `backend-api-v2`.
+ * The result must satisfy KEY_RE (it names files under `.sandbox/` and feeds image tags
+ * and the sbx name), so it is lowercased, disallowed runs become "-", and separators are
+ * collapsed/trimmed. Returns undefined when nothing usable is left (empty title, or a
+ * fully non-ASCII one) — the caller then falls back to the agent id, as before.
+ */
+function keyFromTitle(title: string): string | undefined {
+  const safe = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[._-]{2,}/g, "-")
+    .replace(/^[^a-z0-9]+/, "")
+    .slice(0, KEY_MAX)
+    .replace(/[._-]+$/, "");
+  return KEY_RE.test(safe) ? safe : undefined;
+}
 
 /**
  * One component of a derived docker image tag. Docker repository names need [a-z0-9]
@@ -614,7 +665,7 @@ function getHtml(data: InitData, nonce: string): string {
   <div class="card">
     <div class="field">
       <label class="lbl">Title</label>
-      <input id="title" type="text" placeholder="display label (optional; safe to rename anytime)" />
+      <input id="title" type="text" placeholder="display label (optional; names the new sandbox, safe to rename later)" />
     </div>
     <div class="field">
       <label class="lbl">Agent</label>

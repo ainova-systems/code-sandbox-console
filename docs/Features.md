@@ -306,6 +306,13 @@ sandboxes:
 The recipe declares one or more sandboxes per repo (multi-agent, e.g. `claude` + `shell`).
 Identity (the local id) is kept separately and gitignored (FR-001).
 
+**The UI follows the recipe.** `.sandbox/config.yaml` is a file users are told to edit by
+hand, and it also changes under a git pull or in another VS Code window. The extension
+watches it (and `identity.yaml`): a change refreshes the Sandboxes view and the status bar
+and invalidates the sandbox refs resolved from it, so an edited key takes effect
+immediately instead of Connect going out under the previous sandbox name. Watching keeps
+discovery event-driven and read-only (FR-002) — the watcher observes, it never writes.
+
 ---
 
 # 6. Terminal Requirements
@@ -704,6 +711,33 @@ Long operations shall be cancellable from their progress notification.
 * The report names the state left behind, because the middle of a Rebuild is not
   undoable: cancelled during the build the sandbox is untouched; cancelled after the
   removal, the previous instance is gone and Connect recreates it.
+
+---
+
+## FR-057 Truthful Sandbox Names
+
+Sandbox names shall say what the sandbox is, and a name that cannot be created shall
+never be derived again.
+
+* **New-sandbox keys derive from the title.** At **creation only**, the key is seeded from
+  the entered title, sanitised to the key charset (`Backend API (v2)` → `backend-api-v2`),
+  falling back to the agent id when the title is empty or sanitises away (e.g. a fully
+  non-ASCII title). The uniqueness suffix (`-2`, `-3`, …) stays for genuine collisions.
+* **The key is then frozen forever.** The form locks it in edit mode, so renaming a title
+  never touches the sandbox name, the generated Dockerfile, or the image tag: the rule is
+  that the key must not *track* the title, and seeding it once does not.
+* Consequence, accepted deliberately: the default Dockerfile name follows the key
+  (`<key>.Dockerfile`), so two sandboxes on the same agent no longer *default* to one
+  shared Dockerfile and one shared image. Sharing stays available — typing the same file
+  name in both — and is now explicit rather than accidental.
+* **Names that cannot be created are remembered.** When `sbx create` fails because the
+  name is still claimed by leaked sbx runtime state (a known upstream defect with no
+  released fix — Architecture §14), the name is recorded **per working copy** and key
+  derivation skips any candidate that would produce it. Previously a key freed by a rename
+  or a removal was handed straight to the next new sandbox, which walked the user back
+  into the same permanently failing name.
+* The record is local, never committed, stores names only (it never removes sandboxes),
+  and `sbx reset` makes it irrelevant.
 
 ---
 

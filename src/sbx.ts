@@ -175,9 +175,19 @@ export async function create(
   const { stderr, code } = await run(args, ctx);
   if (code !== 0) {
     const message = stderr.trim() || `sbx create failed for ${opts.name}`;
-    throw new Error(explainCreateFailure(opts.name, message));
+    throw createFailure(opts.name, message);
   }
 }
+
+/**
+ * FR-057: a create that failed because the sbx runtime still holds the name. Typed rather
+ * than text-matched at the call site so callers can react to the condition (ops.ts records
+ * the name as unusable) without re-parsing CLI output outside this module.
+ */
+export class NameClaimedError extends Error {}
+
+/** The leaked-state 500 (see NameClaimedError / createFailure). */
+const NAME_CLAIMED_RE = /failed to create (network|container).*already exists/i;
 
 /**
  * Turn one sbx failure that is otherwise a dead end into something actionable. When a
@@ -189,17 +199,17 @@ export async function create(
  * recovery is `sbx reset`, which destroys every sandbox on the machine. Say so, and point
  * at the cheap way out first.
  */
-function explainCreateFailure(name: string, message: string): string {
-  if (!/failed to create (network|container).*already exists/i.test(message)) {
-    return message;
+function createFailure(name: string, message: string): Error {
+  if (!NAME_CLAIMED_RE.test(message)) {
+    return new Error(message);
   }
-  return (
+  return new NameClaimedError(
     `${message}\n\nThe sandbox name "${name}" is still claimed inside the sbx runtime by ` +
-    "leaked state — a known sbx bug (docker/sbx-releases#129) with no released fix. The " +
-    "name cannot be reused: give this sandbox a new, distinctive `key` in " +
-    ".sandbox/config.yaml — not a bare agent name like `claude`, because new sandboxes " +
-    "take those and would land on this same name again. Or run `sbx reset` to clear all " +
-    "sbx state (this destroys every sandbox on the machine)."
+      "leaked state — a known sbx bug (docker/sbx-releases#129) with no released fix. The " +
+      "name cannot be reused: give this sandbox a new, distinctive `key` in " +
+      ".sandbox/config.yaml. New sandboxes will not land on it again — the name is " +
+      "remembered locally and skipped (FR-057). Or run `sbx reset` to clear all sbx state " +
+      "(this destroys every sandbox on the machine)."
   );
 }
 

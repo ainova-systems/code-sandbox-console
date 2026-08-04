@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as images from "./images";
 import * as log from "./log";
+import * as names from "./names";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 import * as secrets from "./secrets";
@@ -238,6 +239,12 @@ async function createSandbox(
       }
     );
   } catch (err) {
+    if (err instanceof sbx.NameClaimedError) {
+      // FR-057: the name is claimed by leaked runtime state and will fail forever. Record
+      // it here — where the failure is observed — so the next new sandbox cannot be handed
+      // the same name (the extension has no other way to learn this; see names.ts).
+      await names.remember(ref.name);
+    }
     throw err instanceof Cancelled ? new Cancelled(await rollbackCreate(ref)) : err;
   }
 }
