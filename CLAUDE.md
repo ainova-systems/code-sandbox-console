@@ -17,9 +17,11 @@ Two canonical docs are **always current**; history lives in append-only specs:
 - `docs/Architecture.md` — the **technical truth** — read it before changing backend
   behaviour.
 - `docs/specs/00N - <Iteration>.md` — one numbered spec per substantial change: what
-  changed and why. Specs are immutable once written. **Workflow for any substantial
-  change: add the next `00N` spec, then update Features.md/Architecture.md to match in
-  the same change** — the canonical docs must never drift from shipped code.
+  changed and why. Specs live in `docs/specs/drafts/` while the work is open
+  (`Status: planned`) and move to `docs/specs/completed/` once shipped; numbering is
+  continuous across both folders. Specs are immutable once written. **Workflow for any
+  substantial change: add the next `00N` spec, then update Features.md/Architecture.md
+  to match in the same change** — the canonical docs must never drift from shipped code.
 - Upstream `sbx` behaviour (**authoritative**): Docker Sandboxes docs —
   <https://docs.docker.com/ai/sandboxes/>. Architecture.md lists the specific
   `customize/` pages (templates & kits). Verify against these before changing any CLI assumption.
@@ -137,7 +139,7 @@ How a work item travels from idea to `main`; each step is a skill above.
 
 1. **Start.** A work item arrives — an issue, an observed defect, an idea. If it is
    substantial (new FR, behaviour change, architectural shift), `spec-new-iteration`
-   drafts the next `docs/specs/00N` with `Status: planned` and the docs-sync checklist;
+   drafts the next `docs/specs/drafts/00N` with `Status: planned` and the docs-sync checklist;
    the spec's "What & why" / "What changed" ARE the plan, and open questions are settled
    there before any code. A trivial fix (typo, comment, doc wording) skips the spec.
 2. **Implement.** `spec-implement`: work on a `feature/<slug>` branch off `main`, code
@@ -145,9 +147,10 @@ How a work item travels from idea to `main`; each step is a skill above.
    checklist in the same change, and end with `npm run verify` exit 0.
 3. **Review.** `dev-review-changes` on the diff — module boundaries, CLI containment,
    security and UX invariants, docs drift.
-4. **Finish.** Flip the spec to `Status: shipped with this iteration`; behaviour changes
-   also get manual acceptance via `ext-run-local` (the steps go into the PR's
-   "How to Verify"). Then `git-commit-push`.
+4. **Finish.** Flip the spec to `Status: shipped with this iteration` and `git mv` it from
+   `docs/specs/drafts/` to `docs/specs/completed/` in the same change — a shipped spec never
+   stays in `drafts/`; behaviour changes also get manual acceptance via `ext-run-local` (the
+   steps go into the PR's "How to Verify"). Then `git-commit-push`.
 5. **Merge.** `git-open-pr` opens the PR to `main` with the template filled; CI runs the
    same `npm run verify`; the maintainer reviews and approves; `git-merge-pr` runs the
    readiness gates, squash-merges, and cleans up the branches. After merge the spec is

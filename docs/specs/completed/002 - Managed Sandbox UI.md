@@ -1,8 +1,8 @@
 # 002 — Managed Sandbox UI (v0.2)
 
 > **Iteration spec — immutable history.** Describes what changed in this iteration and
-> why. The current truth lives in [`../Architecture.md`](../Architecture.md) and
-> [`../Features.md`](../Features.md); where this spec disagrees with them, they win.
+> why. The current truth lives in [`../../Architecture.md`](../../Architecture.md) and
+> [`../../Features.md`](../../Features.md); where this spec disagrees with them, they win.
 >
 > **Period:** 2026-06-09 ·
 > **Commits:** `f996c19` (POC → managed UI), `c1ffec8` (rebrand, pre-release)

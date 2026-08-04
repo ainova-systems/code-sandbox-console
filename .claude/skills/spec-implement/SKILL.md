@@ -31,8 +31,10 @@ CLAUDE.md is the rule surface - this skill sequences it, it does not replace it.
    exists; no implicit default sandbox; terminal-first (no chat panels); secrets only over
    stdin, never argv/env/image; argv allowlist and path containment stay intact.
 6. **Sync the docs in the same change**: update `docs/Features.md` and `docs/Architecture.md`
-   per the spec's docs-sync checklist, and flip the spec status to shipped. Cite `FR-0xx` in
-   code comments where the code carries the requirement.
+   per the spec's docs-sync checklist, flip the spec status to shipped, and `git mv` the spec
+   from `docs/specs/drafts/` to `docs/specs/completed/` (fix its `../../` doc links if the
+   move changes their depth). Cite `FR-0xx` in code comments where the code carries the
+   requirement.
 7. **Verify**: `npm run verify` must exit 0.
 
 ## Hand-off
