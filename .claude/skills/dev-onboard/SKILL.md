@@ -26,7 +26,8 @@ finish by printing the punchlist of whatever remains for the human.
    repo without sandboxes.
 6. **Where truth lives** (read in this order): CLAUDE.md (rules, module map, git workflow) ·
    `docs/Features.md` (functional truth, FR ids) · `docs/Architecture.md` (technical truth) ·
-   `docs/specs/` (immutable history). Working skills: `spec-new-iteration`, `spec-implement`,
+   `docs/specs/completed/` (immutable history; `docs/specs/drafts/` holds work in flight).
+   Working skills: `spec-new-iteration`, `spec-implement`,
    `ext-run-local`, `dev-review-changes`, `git-commit-push`, `git-open-pr`.
 
 ## Exit

@@ -35,9 +35,11 @@ and pull requests targeting `main`.
   `sbx` CLI assumption against the upstream
   [Docker Sandboxes docs](https://docs.docker.com/ai/sandboxes/).
 - Substantial changes follow the documentation model (see `CLAUDE.md`): add the next
-  `docs/specs/00N - <Iteration>.md` spec describing what/why, and update
+  `docs/specs/drafts/00N - <Iteration>.md` spec describing what/why, and update
   `Features.md`/`Architecture.md` to match in the same PR — the canonical docs must
-  never drift from shipped code. Specs are immutable once merged.
+  never drift from shipped code. When the change ships, the spec's status flips to
+  shipped and the file moves to `docs/specs/completed/`; numbering runs continuously
+  across both folders. Specs are immutable once merged.
 - Keep `sbx` CLI strings in `src/sbx.ts` (all child-process invocations) and
   `src/terminal.ts` (the interactive `sbx run`/`exec` shellArgs) — those two
   modules only. One deliberate carve-out: the bash template in `src/script.ts`

@@ -31,7 +31,7 @@ the wrong altitude: it gave only container-level isolation (shared host kernel) 
 forced us to reimplement persistence, network/filesystem policies, agent launching,
 and credential handling — all of which `sbx` already provides natively, and more
 strongly (microVM isolation). The raw-Docker backend was removed (see
-[specs/001](specs/001%20-%20Walking%20Skeleton.md)).
+[specs/001](specs/completed/001%20-%20Walking%20Skeleton.md)).
 
 `sbx` (verified `v0.31.3`) gives us, out of the box:
 

@@ -26,8 +26,9 @@ finding as `file:line - what and why`; no findings is a valid result and is said
    sandbox exists; no implicit default sandbox appears; terminal-first holds (no chat panels);
    startup stays quiet and writes nothing into `.sandbox/`.
 5. **Docs drift**: if the diff changes behaviour, the same diff updates `docs/Features.md` /
-   `docs/Architecture.md` and carries its `docs/specs/00N` spec (status flipped to shipped).
-   FR ids cited in the code match real entries.
+   `docs/Architecture.md` and carries its `00N` spec with the status flipped to shipped and
+   the file moved from `docs/specs/drafts/` to `docs/specs/completed/`. FR ids cited in the
+   code match real entries.
 6. **Gate**: `npm run verify` exits 0 on the reviewed tree.
 
 ## Escalation

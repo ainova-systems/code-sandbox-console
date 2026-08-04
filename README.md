@@ -146,7 +146,7 @@ Security policy and vulnerability reporting:
 
 - [Features](https://github.com/ainova-systems/code-sandbox-console/blob/main/docs/Features.md)
   and [Architecture](https://github.com/ainova-systems/code-sandbox-console/blob/main/docs/Architecture.md)
-- [Iteration specs](https://github.com/ainova-systems/code-sandbox-console/tree/main/docs/specs)
+- [Iteration specs](https://github.com/ainova-systems/code-sandbox-console/tree/main/docs/specs/completed)
 - [Contributing](https://github.com/ainova-systems/code-sandbox-console/blob/main/CONTRIBUTING.md)
   — build, debug, and PR conventions
 - [Issues & support](https://github.com/ainova-systems/code-sandbox-console/issues)

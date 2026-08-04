@@ -1,8 +1,8 @@
 # 007 — Generated Project CLI (FR-052)
 
 > **Iteration spec — immutable history.** Describes what changed in this iteration and
-> why. The current truth lives in [`../Architecture.md`](../Architecture.md) and
-> [`../Features.md`](../Features.md); where this spec disagrees with them, they win.
+> why. The current truth lives in [`../../Architecture.md`](../../Architecture.md) and
+> [`../../Features.md`](../../Features.md); where this spec disagrees with them, they win.
 >
 > **Period:** 2026-06-10 · **Base:** `main` after spec 005 · designed alongside spec 006
 >

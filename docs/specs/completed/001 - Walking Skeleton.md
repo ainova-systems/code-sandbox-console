@@ -1,8 +1,8 @@
 # 001 — Walking Skeleton (v0.1)
 
 > **Iteration spec — immutable history.** Describes what changed in this iteration and
-> why. The current truth lives in [`../Architecture.md`](../Architecture.md) and
-> [`../Features.md`](../Features.md); where this spec disagrees with them, they win.
+> why. The current truth lives in [`../../Architecture.md`](../../Architecture.md) and
+> [`../../Features.md`](../../Features.md); where this spec disagrees with them, they win.
 >
 > **Period:** 2026-06-08 … 2026-06-09 ·
 > **Commits:** `6a8ce18` (FRD), `3000351`, `e65eb54`
