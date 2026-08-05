@@ -16,7 +16,9 @@ CLAUDE.md
 AGENTS.md
 CONTRIBUTING.md
 SECURITY.md
-# Local release working notes (untracked): vsce honours .vscodeignore only,
-# so it must be excluded here or it ships inside the published VSIX.
+# Local working notes and scratch checkouts (untracked): vsce honours .vscodeignore only —
+# a git exclude does NOT keep them out — so they must be listed here or they ship inside
+# the published VSIX. `npx vsce ls` before every release is what catches a new one.
 RELEASE_PLAN.md
+.tmp/**
 *.vsix
