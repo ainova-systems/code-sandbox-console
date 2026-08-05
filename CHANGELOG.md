@@ -5,6 +5,38 @@ All notable changes to this extension are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-05
+
+Sandboxes are now named after what they are, the views follow the config file instead of a
+snapshot of it, and a sandbox name that the Docker Sandboxes runtime refuses to release is
+never handed out again.
+
+### Added
+
+- **Sandboxes are named after their title.** A new sandbox takes its name from the title
+  you type — *Backend API (v2)* becomes `backend-api-v2` — instead of a counter on the
+  agent name (`claude`, `claude-2`, …). An empty title still falls back to the agent name.
+  The name is fixed at creation: renaming the title afterwards is safe, as before, and
+  never touches the sandbox, its Dockerfile, or its image.
+- **The views follow `.sandbox/config.yaml`.** Editing the file — by hand, from another
+  window, or through a `git pull` — refreshes the Sandboxes view and the status bar right
+  away. Renaming a sandbox and connecting immediately now uses the new name instead of
+  quietly acting on the old one.
+
+### Changed
+
+- **A name the runtime will not release is remembered and skipped.** When creating a
+  sandbox fails because its name is still held inside the Docker Sandboxes runtime — a
+  known upstream issue with no released fix — that name is recorded for this working copy,
+  and no new sandbox is given it again. Previously a name freed by a rename or a removal
+  was handed straight to the next sandbox, walking back into the same failure. The record
+  stays on your machine, holds names only, and is cleared by `sbx reset`.
+- **A new sandbox gets its own Dockerfile by default.** Because the default Dockerfile name
+  follows the sandbox name, two sandboxes on the same agent no longer share one generated
+  `claude.Dockerfile` by accident. Sharing is still available — type the same file name in
+  both — and is now something you choose rather than something that happens.
+- The extension is no longer marked as a preview.
+
 ## [0.3.0] - 2026-07-29
 
 Long operations — image builds, sandbox creation — used to run behind a notification that
@@ -121,5 +153,6 @@ Terminal-first commands over the `sbx` CLI (create, attach, stop, shell) with st
 discovery of existing sandboxes and per-repo sandbox identity in a single local file.
 Superseded by 0.2.0 and listed here only for history.
 
+[0.4.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.2.0
