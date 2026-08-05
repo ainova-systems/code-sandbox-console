@@ -1,9 +1,10 @@
 import * as vscode from "vscode";
 import { agentLabel } from "./agents";
-import { readConfig, SandboxConfig, SandboxSpec } from "./config";
+import { CONFIG_DIR, readConfig, SandboxConfig, SandboxSpec } from "./config";
 import { openForm, showInvalidConfig } from "./form";
 import { ensureIdentity, readIdentity } from "./identity";
 import * as log from "./log";
+import * as names from "./names";
 import * as ops from "./ops";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
@@ -21,6 +22,8 @@ let extCtx: vscode.ExtensionContext;
 
 export function activate(context: vscode.ExtensionContext): void {
   extCtx = context;
+  // FR-057: the record of sbx names this machine can no longer create is per working copy.
+  names.init(context.workspaceState);
   statusItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     100
@@ -62,12 +65,64 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   registerExplorer(context);
+  watchRecipe(context);
   // FR-002: startup discovery is SILENT — it only feeds the status bar and the
   // Explorer. Opening a workspace never raises notifications; Connect lives one
   // click away in the status bar.
   void refreshStatus();
   // FR-052: keep the generated project CLI current for repos that use sandboxes.
   void refreshProjectScript();
+}
+
+/**
+ * FR-009: follow the recipe on disk. `.sandbox/config.yaml` is a committed file the docs
+ * actively tell people to edit by hand, and it also changes under a git pull or a second
+ * VS Code window — but the status bar and the Explorer resolve their keys (and therefore
+ * sbx names) when they render. Without this, editing the recipe left both surfaces acting
+ * on the previous key until something unrelated refreshed them, so Connect went out under
+ * the old sandbox name — a rename appeared not to work.
+ *
+ * Watching, not polling: discovery stays event-driven and silent (FR-002), and the watcher
+ * only observes — it never writes into `.sandbox/`.
+ */
+function watchRecipe(context: vscode.ExtensionContext): void {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    return;
+  }
+  // `.sandbox/*.yaml` = the recipe plus identity.yaml (a regenerated id changes every
+  // sandbox name too). Scoped to the workspace folder so a nested repo cannot fire it.
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(folder, `${CONFIG_DIR}/*.yaml`)
+  );
+  let pending: NodeJS.Timeout | undefined;
+  const changed = (): void => {
+    // A single save can emit several events; refreshing per event would run one `sbx ls`
+    // each. Coalesce them — the tree and the status bar re-read the file when they reload.
+    if (pending) {
+      clearTimeout(pending);
+    }
+    pending = setTimeout(() => {
+      pending = undefined;
+      void refreshStatus();
+      void vscode.commands
+        .executeCommand("sandboxConsole.refresh")
+        .then(undefined, () => undefined);
+    }, 300);
+  };
+  context.subscriptions.push(
+    watcher,
+    watcher.onDidChange(changed),
+    watcher.onDidCreate(changed),
+    watcher.onDidDelete(changed),
+    {
+      dispose: () => {
+        if (pending) {
+          clearTimeout(pending);
+        }
+      },
+    }
+  );
 }
 
 export function deactivate(): void {

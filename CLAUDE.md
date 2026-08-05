@@ -87,12 +87,15 @@ executed by the extension), `sandbox.ts` (recipe→refs + naming + lifecycle), `
 (per-sandbox create/attach/rebuild/shell shared by palette + Explorer; owns the progress
 spinners, the one-operation-per-sandbox guard FR-054 and cancellation FR-056),
 `log.ts` (operation log FR-055: the `Sandbox Console` channel + the spawn runner every
-sbx/docker call streams through — process plumbing only, no CLI strings), `terminal.ts`
+sbx/docker call streams through — process plumbing only, no CLI strings), `names.ts`
+(per-working-copy `workspaceState` record of sbx names that can no longer be created,
+FR-057), `terminal.ts`
 (native terminals driving sbx), `form.ts` (webview Configure form), `tree.ts` (Sandbox
 Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
-Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, script, secrets, sbx, log}`;
-`ops → {images, secrets, sandbox, terminal, sbx, log}`;
+Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
+`ops → {images, secrets, sandbox, terminal, names, sbx, log}`;
 `tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
+`form → {ops, secrets, sandbox, config, identity, agents, names, script, sbx}`;
 `secrets → {blobs, sandbox, services, sbx}`; `script → config`;
 `sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`; `sbx → log`;
 nothing depends on `extension`.
