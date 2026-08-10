@@ -185,7 +185,9 @@ Possible outcomes:
 Discovery is **always silent and read-only**: opening a workspace never raises
 notifications and **never writes into `.sandbox/`**. Its results surface passively in
 the status bar item (state icon + display name; `+ New Sandbox` when nothing is defined)
-and the Sandboxes view — Connect is one click away in either place. The local
+and the Sandboxes view — Connect is one click away in either place. Silent about
+*sandboxes*, not about the host: when the prerequisites for running one are missing, both
+surfaces report that instead (FR-059) — still passively, still writing nothing. The local
 `identity.yaml`, the `.gitignore`, and the generated `sbx.sh` are created only when the
 user creates their first sandbox (New Sandbox save, or Connect/Shell on a recipe entry),
 not by merely opening a project — so a repo whose `config.yaml` is committed by the team
@@ -286,6 +288,10 @@ preinstalled, instead of the agent's default image.
 * Build pipeline (verified): `docker build` → `docker save` → `sbx template load` →
   `sbx run/create -t <image>`. **Rebuild image** re-runs this pipeline with a forced
   base-image pull (FR-053).
+* This is the **only** mode that needs host Docker — `sbx` itself does not (FR-059). The
+  form states the requirement in the *Custom: Dockerfile* block, distinguishing *not
+  installed* from *installed but the engine is not running*. The *Custom: image* mode is
+  pulled by sbx and needs no host Docker.
 * Secrets shall **never** be baked into images — they are provisioned via FR-032.
 
 ## FR-009 Configuration Recipe
@@ -540,6 +546,50 @@ A sandbox shall never be created into a workspace its mount mode cannot serve.
 
 ---
 
+## FR-059 Prerequisite Readiness
+
+A host that cannot run sandboxes shall **say so**, naming the missing prerequisite —
+never fall silent and never claim the repo has no sandboxes.
+
+* **`sbx` is the only product-wide prerequisite.** Docker Sandboxes runs its own daemon;
+  per Docker's documentation *"Docker Desktop is not required to use `sbx`"*. Host Docker
+  is required by **one feature** — the custom Dockerfile build (FR-008), and the image
+  refresh that precedes a rebuild (FR-053) — so it is never reported as a product
+  requirement.
+* **Readiness comes from the installation's own report**, `sbx diagnose`, which names which
+  precondition failed (CLI binary, daemon, version match, storage, permissions, socket,
+  authentication) and carries the CLI's remedy text. Three outcomes are distinguished:
+  **not found**, **not signed in**, and **not healthy** (reported in the CLI's own words,
+  so a check added by a future version is not flattened into "unknown error"). Only a
+  failed check blocks; a warning does not.
+* **The status bar states it** — `⚠ Sandbox not available`, with the missing piece and its
+  remedy in the tooltip. It is not hidden: hiding made a missing `sbx` and a missing
+  *extension* look identical.
+* **The Sandboxes view states it** — a single readiness node replaces the tree, instead of
+  the "No sandboxes yet for this repo" welcome, which is false whenever the committed
+  recipe (FR-009) defines sandboxes and points at New Sandbox, the one action that cannot
+  work. The same applies when sandbox state cannot be read at all: entries are not rendered
+  as *not created*, a state nobody verified.
+* **New Sandbox is refused in a modal** naming the prerequisite, where the extension looked
+  for it, and the follow-up (`sbx login`), with a link to
+  <https://docs.docker.com/ai/sandboxes/>. Modal because it ends the action the user just
+  asked for (as FR-058); the form does not open, so nothing is written to `.sandbox/` for a
+  sandbox that could not be created. No per-OS install command is executed or suggested —
+  Docker's page covers the platforms.
+* **`Sandbox: Check Prerequisites`** re-runs the report on demand: it is what the warning
+  indicator and the readiness node open, and it makes an install or a `sbx login` take
+  effect without reloading the window (executable paths are re-resolved on every miss for
+  the same reason).
+* **The custom-image Docker requirement is stated where it is chosen** — in the New/Edit
+  form's *Custom: Dockerfile* block, not minutes later at Create. *Installed* and *engine
+  not running* are told apart (a client-only `docker --version` succeeds while the engine
+  is stopped). It is advisory: the build itself stays the gate, since Docker may be started
+  in between.
+* Readiness is **not** discovery: nothing here writes into `.sandbox/` or raises a
+  notification when a workspace is opened (FR-002 is unchanged).
+
+---
+
 # 10. Sandbox Explorer
 
 A dedicated VS Code sidebar shall be available, **scoped to the current repo**.
@@ -582,6 +632,9 @@ the live state icon; the agent is in the tooltip. Clicking it (or running
   **New Sandbox…**; picking one connects and makes it the locally active sandbox;
 * none → the New Sandbox form.
 
+When the host prerequisites are missing the item shows `⚠ Sandbox not available` instead,
+and clicking it re-runs the readiness report rather than offering a sandbox (FR-059).
+
 The sandbox the single-action commands (Connect / Stop / Shell / Rebuild) target
 resolves as: **locally last-picked** (per working copy) → the recipe's **`default: true`**
 entry (committed/shared; settable via a checkbox in the New/Edit form, single default
@@ -595,11 +648,13 @@ per recipe) → the **first** recipe entry.
 ● Running
 ○ Stopped
 + Not created
+⚠ Sandbox not available   (host prerequisite missing — FR-059)
 ```
 
 The implemented state model is `absent | running | stopped` — discovery (FR-002)
 surfaces any failed/error status reported by sbx as **Stopped**; a distinct ⚠ Failed
-indicator is not implemented.
+indicator is not implemented. The ⚠ above is about the **host**, not a sandbox: it
+replaces the whole indicator when no sandbox state can be established at all.
 
 ---
 
@@ -616,6 +671,7 @@ Switch Sandbox        — pick the active sandbox from the recipe list (FR-050)
 New Sandbox           — the agent is picked in the form; no per-agent Open commands
 Manage Cached Secrets — list/rename/delete per-project cached secret entries (FR-051)
 Show Log              — reveal the operation log (FR-055)
+Check Prerequisites   — re-run the host readiness report (FR-059)
 Refresh
 ```
 

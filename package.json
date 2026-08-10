@@ -100,6 +100,11 @@
         "icon": "$(output)"
       },
       {
+        "command": "sandboxConsole.checkPrerequisites",
+        "title": "Check Prerequisites",
+        "category": "Sandbox"
+      },
+      {
         "command": "sandboxConsole.refresh",
         "title": "Refresh",
         "category": "Sandbox",

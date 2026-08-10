@@ -65,32 +65,34 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 
 | Module | Responsibility |
 |---|---|
-| `extension.ts` | Activation, palette commands, status bar item, silent startup discovery feeding it (Features §3, "Attach before Create"). Orchestrates the flows below. |
+| `extension.ts` | Activation, palette commands, status bar item, silent startup discovery feeding it (Features §3, "Attach before Create"). Orchestrates the flows below. The status item reports host readiness rather than hiding when nothing can run (FR-059), and `Check Prerequisites` re-runs the report on demand. |
 | `config.ts` | Parses/writes the committed `.sandbox/config.yaml` recipe, incl. the project `name` (FR-009, §6). |
 | `identity.ts` | Reads/writes the **gitignored** `.sandbox/identity.yaml` — a short random `{id}` per working copy (FR-001, §6). |
-| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). Invocations run through `log.ts` (FR-055); the argument vectors stay here. |
+| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`diagnose -o json`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). Invocations run through `log.ts` (FR-055); the argument vectors stay here. A **found** executable path is cached, a fallback never is (FR-059) — a window open at install time captured its environment (`PATH` included) beforehand, so caching the miss kept it broken until a reload. |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
-| `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). |
+| `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). Owns the host-Docker probe `dockerState()` — `docker --version` for *installed*, then `docker info` for *engine reachable*, since the client-only `--version` succeeds while the engine is stopped (FR-059) — and the one sentence both the build failure and the form's notice use. Executable path cached like `sbx.ts`: hits only. |
 | `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
 | `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054), cancellation at stage boundaries (FR-056) — §12 — and the mount preflight (FR-058, §5) whose modal refusal it shows itself, raising the shared `HandledError` so no surface reports it twice. |
 | `git.ts` | Read-only host git probes (FR-058): `isShallowRepository` (`git rev-parse --is-shallow-repository`, resolved with `-C` so a workspace inside a repo works). Own module for the same reason `sbx.ts` is one — one place per external CLI's argv. Never mutates a repository. |
+| `prereq.ts` | Host readiness (FR-059, §5): classifies `sbx diagnose` into *missing / signed-out / unhealthy*, formats the status-bar tooltip, and owns the modal refusal shared by the status bar, the Sandboxes view and the New Sandbox command — three surfaces that cannot import one another. Also answers the **separate** host-Docker question for the custom-image mode. Probes are never cached: readiness is exactly what changes under the extension. |
 | `log.ts` | The operation log (FR-055): the `Sandbox Console` output channel plus the `spawn`-based runner every `sbx`/`docker` call goes through — streams child output to the channel and to the progress notification, and kills the child on cancel. Process plumbing only: it knows no CLI strings. |
 | `names.ts` | The per-working-copy record of sbx names that can no longer be created (FR-057, §14): `workspaceState`-backed, written when a create fails with the leaked-state error, read by key derivation. Local by construction — it never reaches the committed recipe. |
 | `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. Also opens the one **host** terminal the extension needs (`openHostCommandTerminal`): the FR-058 hand-off, which types `git fetch --unshallow` and leaves the Enter to the user. |
-| `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. |
-| `tree.ts` | Sandbox Explorer view + per-node commands (§12). |
+| `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. States the host-Docker requirement inside the *Custom: Dockerfile* block, so it is known when the mode is chosen rather than at Create (FR-059). |
+| `tree.ts` | Sandbox Explorer view + per-node commands (§12). Renders a readiness node instead of an empty tree when the host cannot run sandboxes or their state cannot be read (FR-059). |
 | `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. |
 
 Dependency direction (verified against imports):
-`extension → {ops, form, tree, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
-`tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
-`form → {ops, secrets, sandbox, config, identity, agents, names, script, sbx}`;
+`extension → {ops, form, tree, prereq, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
+`tree → {ops, form, prereq, sandbox, config, identity, agents, sbx, log}`;
+`form → {ops, prereq, secrets, sandbox, config, identity, agents, names, script, sbx}`;
 `ops → {images, secrets, sandbox, terminal, names, git, sbx, log}`;
 `terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
 `sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`;
-`sbx → log`; `git → log`; `script → config`; `identity → config`.
+`prereq → {images, sbx}`; `sbx → log`; `git → log`; `script → config`;
+`identity → config`.
 Nothing depends on `extension`; `config`, `agents`, `services`, `blobs`, `names`, and
 `log` are leaves.
 
@@ -119,6 +121,18 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 The UI labels the attach action **Connect** (the underlying sbx operation is still an
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
 first, then choosing the create form (`… <agent> <path>`) or the attach form (`… <name>`).
+
+**Preflight: the host, then the workspace.** Before any of this, the machine has to be able
+to run a sandbox at all. `prereq.ts` asks the installation itself — `sbx diagnose -o json`,
+whose checks (CLI binary, daemon, version match, storage, permissions, socket,
+authentication) name the broken precondition and carry the CLI's own remedy text — and
+classifies the outcome as *missing*, *signed-out* or *unhealthy* (FR-059). It costs the same
+as the `sbx version` probe it replaced (~480 ms, all process start-up), so it sits on the
+passive path: the status bar and the Sandboxes view report it instead of falling silent, and
+`New Sandbox` refuses in a modal before the form opens. An sbx too old to know `diagnose`
+falls back to `version` and counts as ready — this check explains a broken install, it does
+not add a version requirement. Host **Docker** is deliberately not part of it: sbx needs
+none (§3), only the custom-image build does (§7).
 
 **Preflight before the first sbx call.** Every create path (Connect, Shell, Rebuild)
 first checks that the workspace can serve the sandbox's mount mode: `hostToSandboxPath`
@@ -235,6 +249,13 @@ docker save <image> -o <tar>                               # host docker store �
 sbx template load <tar>                                     # into the sbx runtime image store
 sbx create -t <image> <agent> <workspace>                  # custom rootfs, agent preserved
 ```
+
+**This path — and only this path — needs host Docker** (FR-059). `sbx` runs its own daemon
+(§3) and Docker's own prerequisites state that Docker Desktop is not required for it, so the
+requirement is stated where the mode is chosen (the form's *Custom: Dockerfile* block) and
+nowhere product-wide. `images.dockerState()` separates *not installed* from *engine not
+running*, because `docker --version` is answered by the client alone and a build needs the
+daemon. The *Custom: image* mode does not need it either: sbx pulls that image itself.
 
 **The sbx runtime image store is separate from host docker** — a host-built image is NOT
 visible to `-t` until `template load`ed. Templates persist in the store; only `sbx reset`
@@ -570,6 +591,11 @@ re-encoding these rules as prose and calls subcommands instead
 - **Single workspace folder** — multi-root workspaces operate on `workspaceFolders[0]`.
 - **No ⚠ Failed state** — discovery surfaces any failed/error sbx status as **Stopped**
   (Features §10 note).
+- **Readiness classification leans on `sbx diagnose`'s check names** (FR-059): the
+  *signed-out* branch is the failed check whose name matches `/auth/i`, the binary branch
+  `/binary|cli/i`. The report is versioned (`"version": "1.0"`) but the names are not a
+  documented contract, so a rename degrades the outcome to *unhealthy* — which still shows
+  the CLI's own message and hint, and still blocks. Fails safe, not silent.
 - **Remote Control is incompatible with the sbx credential proxy (by design).** The
   proxy injects an inference-scoped credential; the sandbox only holds a sentinel, so
   Claude Code's Remote Control cannot mint the session credentials it needs (401/403,

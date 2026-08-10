@@ -85,6 +85,11 @@ from config.
   committed `.sandbox/config.yaml`, so it stays inert in untrusted and virtual workspaces.
 - An account for whichever agent you run (e.g. Claude Code's `/login` inside the sandbox).
 
+A missing prerequisite is reported, not swallowed: the status bar shows
+**⚠ Sandbox not available** with what is missing in its tooltip, New Sandbox refuses with an
+explanation and a link, and **Sandbox: Check Prerequisites** re-runs the check after you
+install or sign in — no window reload needed.
+
 Verified against sbx v0.31.3 (2026-07-28), Windows 11.
 
 **Platform support:** developed and verified on **Windows** (`sbx` is resolved from

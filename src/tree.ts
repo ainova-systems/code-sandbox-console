@@ -11,6 +11,7 @@ import { openForm } from "./form";
 import { ensureIdentity, readIdentity } from "./identity";
 import * as log from "./log";
 import * as ops from "./ops";
+import * as prereq from "./prereq";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 
@@ -98,13 +99,33 @@ class ConfigErrorNode extends vscode.TreeItem {
   }
 }
 
-type Node = GroupNode | SandboxNode | ConfigErrorNode;
+/**
+ * Single node shown when the host cannot run sandboxes (FR-059): no `sbx` CLI, an unhealthy
+ * daemon, or nobody signed in. Without it the view falls through to an empty tree and VS Code
+ * renders the "No sandboxes yet for this repo" welcome — false whenever the committed recipe
+ * defines sandboxes, and pointing at New Sandbox, the one action that cannot work.
+ */
+class NotReadyNode extends vscode.TreeItem {
+  constructor(problem: prereq.SbxProblem) {
+    super(problem.summary, vscode.TreeItemCollapsibleState.None);
+    this.description = problem.kind === "signed-out" ? "sbx login" : "not ready";
+    this.tooltip = prereq.tooltip(problem);
+    this.contextValue = "notReady";
+    this.iconPath = new vscode.ThemeIcon("warning");
+    this.command = {
+      command: "sandboxConsole.checkPrerequisites",
+      title: "Check prerequisites",
+    };
+  }
+}
+
+type Node = GroupNode | SandboxNode | ConfigErrorNode | NotReadyNode;
 
 interface Loaded {
   groups: Map<string, SandboxNode[]>;
   ungrouped: SandboxNode[];
-  /** Set when config.yaml is malformed — rendered as the only (root) node. */
-  error?: ConfigErrorNode;
+  /** Set when the recipe is malformed or the host is not ready — the only (root) node. */
+  error?: ConfigErrorNode | NotReadyNode;
 }
 
 class SandboxExplorer implements vscode.TreeDataProvider<Node> {
@@ -128,7 +149,11 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
     if (element instanceof GroupNode) {
       return loaded.groups.get(element.group) ?? [];
     }
-    if (element instanceof SandboxNode || element instanceof ConfigErrorNode) {
+    if (
+      element instanceof SandboxNode ||
+      element instanceof ConfigErrorNode ||
+      element instanceof NotReadyNode
+    ) {
       return [];
     }
     if (loaded.error) {
@@ -157,7 +182,13 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
     const ungrouped: SandboxNode[] = [];
     const result: Loaded = { groups, ungrouped };
     const root = sandbox.workspaceRoot();
-    if (!root || !(await sbx.available())) {
+    if (!root) {
+      return this.store(result, gen);
+    }
+    // FR-059: an unusable host is a state of its own, not "no sandboxes".
+    const readiness = await prereq.sbxReadiness();
+    if (!readiness.ok) {
+      result.error = new NotReadyNode(readiness);
       return this.store(result, gen);
     }
     let config;
@@ -204,8 +235,17 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
     if (identity) {
       try {
         infos = await sbx.list();
-      } catch {
-        // not signed in / CLI error — treat all as absent
+      } catch (err) {
+        // Readiness passed, so this is a live CLI failure rather than a missing
+        // prerequisite. Rendering every entry as "not created" would invent a state we do
+        // not know — and contradict the status bar, which reports the same failure (FR-059).
+        result.error = new NotReadyNode({
+          ok: false,
+          kind: "unhealthy",
+          summary: "Sandbox state is unavailable.",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        return this.store(result, gen);
       }
     }
     const status = new Map(infos.map((i) => [i.name, i.status]));

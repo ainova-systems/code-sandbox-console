@@ -6,6 +6,18 @@ import * as log from "./log";
 let cachedPath: string | undefined;
 
 /**
+ * Where the executable is looked for before falling back to PATH — the locations the
+ * installer uses, empty where PATH is the only source. Exported so a "not found" message can
+ * name them (FR-059) without a second module knowing the install layout.
+ */
+export function sbxCandidates(): string[] {
+  const local = process.env.LOCALAPPDATA;
+  return local && process.platform === "win32"
+    ? [path.join(local, "DockerSandboxes", "bin", "sbx.exe")]
+    : [];
+}
+
+/**
  * Resolve the `sbx` executable. On Windows the installer puts it under
  * %LOCALAPPDATA%\DockerSandboxes\bin but does NOT add it to PATH, so we look
  * there first and fall back to the bare command name (PATH installs on
@@ -15,19 +27,17 @@ export function sbxPath(): string {
   if (cachedPath) {
     return cachedPath;
   }
-  const candidates: string[] = [];
-  const local = process.env.LOCALAPPDATA;
-  if (local) {
-    candidates.push(path.join(local, "DockerSandboxes", "bin", "sbx.exe"));
-  }
-  for (const candidate of candidates) {
+  for (const candidate of sbxCandidates()) {
     if (fs.existsSync(candidate)) {
       cachedPath = candidate;
       return cachedPath;
     }
   }
-  cachedPath = process.platform === "win32" ? "sbx.exe" : "sbx";
-  return cachedPath;
+  // Deliberately NOT cached (FR-059): the fallback means "not found where we look", and a
+  // window that was already open when sbx was installed cannot reach it by name either — its
+  // environment block, PATH included, was captured before the installer ran. Caching the miss
+  // would keep that window broken until a reload. A miss costs one existsSync per call.
+  return process.platform === "win32" ? "sbx.exe" : "sbx";
 }
 
 type RunResult = log.RunResult;
@@ -112,6 +122,45 @@ export function assertSecretService(service: string): string {
 export async function available(): Promise<boolean> {
   const { code } = await probe(["version"]);
   return code === 0;
+}
+
+/** One row of `sbx diagnose -o json`; `hint` is the CLI's own remedy text (may be empty). */
+export interface DiagnosticCheck {
+  name: string;
+  /** "pass" | "warn" | "fail" | "skip". */
+  status: string;
+  message: string;
+  detail: string;
+  hint: string;
+}
+
+/**
+ * The installation's own readiness report (FR-059) — `sbx diagnose -o json` covers CLI
+ * binary, daemon health, version match, storage, permissions, socket and authentication.
+ *
+ * Preferred over inferring readiness from a failed `ls`: it is the CLI's supported,
+ * machine-readable answer, it names WHICH precondition is broken, and it carries Docker's
+ * own `hint` text — measured at ~480ms, the same as the `sbx version` probe it replaces
+ * (the cost is process start-up, not the checks). Read-only: uploading is opt-in
+ * (`--upload`), which this never passes.
+ *
+ * Returns undefined when no report could be obtained at all — the CLI is missing, or too
+ * old to know the subcommand — which callers treat as "cannot run sbx" after confirming
+ * with `available()`.
+ */
+export async function diagnose(): Promise<DiagnosticCheck[] | undefined> {
+  const { stdout, code } = await probe(["diagnose", "-o", "json"]);
+  // The exit code is not contracted to be 0 when checks fail, so parse regardless and let
+  // the checks speak; only an unparsable report counts as "no report".
+  try {
+    const parsed = JSON.parse(stdout) as { checks?: DiagnosticCheck[] };
+    if (Array.isArray(parsed.checks) && parsed.checks.length > 0) {
+      return parsed.checks;
+    }
+  } catch {
+    // not JSON — an older CLI without `diagnose`, or a usage error
+  }
+  return code === 0 ? [] : undefined;
 }
 
 export interface SandboxInfo {

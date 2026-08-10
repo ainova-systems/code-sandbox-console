@@ -12,6 +12,7 @@ import {
 import { ensureIdentity } from "./identity";
 import * as names from "./names";
 import * as ops from "./ops";
+import * as prereq from "./prereq";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 import { ensureProjectScript } from "./script";
@@ -56,6 +57,8 @@ interface InitData {
   ports: number[];
   mount: string;
   isDefault: boolean;
+  /** FR-059: the host-Docker requirement of the Dockerfile mode; empty when a build can run. */
+  dockerNotice: string;
 }
 
 export async function openForm(
@@ -63,10 +66,11 @@ export async function openForm(
   root: vscode.Uri,
   mode: FormMode
 ): Promise<void> {
-  const [agentIds, serviceIds, secretList] = await Promise.all([
+  const [agentIds, serviceIds, secretList, dockerNotice] = await Promise.all([
     sbx.listAgents(),
     sbx.listSecretServices(),
     sbx.listSecrets(),
+    prereq.dockerNotice(),
   ]);
   let config: SandboxConfig | undefined;
   try {
@@ -117,6 +121,7 @@ export async function openForm(
     ports: current?.ports ?? [],
     mount: current?.mount ?? "direct",
     isDefault: current?.default ?? false,
+    dockerNotice: dockerNotice ?? "",
   };
 
   const panel = vscode.window.createWebviewPanel(
@@ -538,6 +543,13 @@ const SCRIPT = `(function(){
   Array.prototype.forEach.call(document.querySelectorAll('input[name=env]'), function(r){ r.checked = (r.value === I.env); });
   document.getElementById('image').value = I.image || '';
   document.getElementById('dockerfile').value = I.dockerfile || '';
+  // FR-059: only the Dockerfile mode needs host Docker — the image mode is pulled by sbx
+  // itself — so the notice lives in that block and appears exactly when it is chosen.
+  if (I.dockerNotice) {
+    var dn = document.getElementById('dockerNotice');
+    dn.textContent = I.dockerNotice;
+    dn.style.display = 'block';
+  }
   function syncEnv(){
     var sel = document.querySelector('input[name=env]:checked');
     var v = sel ? sel.value : 'default';
@@ -640,6 +652,8 @@ function getHtml(data: InitData, nonce: string): string {
   input[type=checkbox],input[type=radio]{ width:auto; margin:0; accent-color:var(--vscode-focusBorder); }
   .custom{ margin-top:10px; }
   .hint{ color:var(--vscode-descriptionForeground); font-size:11px; margin-top:8px; line-height:1.5; }
+  /* FR-059: the host-Docker requirement of the Dockerfile mode, shown with the mode itself. */
+  .warn{ color:var(--vscode-inputValidation-warningForeground,var(--vscode-foreground)); background:var(--vscode-inputValidation-warningBackground); border:1px solid var(--vscode-inputValidation-warningBorder); border-radius:4px; padding:8px 10px; font-size:12px; line-height:1.5; margin-bottom:10px; }
   details{ margin-top:16px; border-top:1px solid var(--vscode-widget-border,var(--vscode-panel-border)); padding-top:12px; }
   summary{ cursor:pointer; font-size:12px; font-weight:600; user-select:none; color:var(--vscode-foreground); }
   summary:hover{ color:var(--vscode-textLink-foreground); }
@@ -697,6 +711,7 @@ function getHtml(data: InitData, nonce: string): string {
         <label class="inline"><input type="radio" name="env" value="dockerfile" /> Custom: Dockerfile</label>
         <label class="inline"><input type="radio" name="env" value="image" /> Custom: image (pull as-is)</label>
         <div id="dockerBlock" class="custom" style="display:none">
+          <div id="dockerNotice" class="warn" style="display:none"></div>
           <label class="lbl">Dockerfile (under .sandbox/)</label>
           <input id="dockerfile" type="text" placeholder="auto: &lt;sandbox name&gt;.Dockerfile" />
           <div class="hint">Created if missing, FROM the selected agent's base image. Enter the same file name in several sandboxes to share one committed Dockerfile. Edit it, then Rebuild/Connect to build.</div>
