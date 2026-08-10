@@ -14,8 +14,9 @@ finish by printing the punchlist of whatever remains for the human.
    - Node.js 20+ (`node --version`);
    - VS Code 1.90+;
    - Docker Sandboxes - required for real sandbox runs, optional for build-only work. Windows
-     install lands `sbx` at `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe` (not on PATH); probe
-     with `sbx version` at that path, and note that sign-in is a manual browser step.
+     install lands `sbx` at `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`; probe it there
+     rather than through PATH, which may or may not carry it. `sbx diagnose` reports every
+     precondition at once (binary, daemon, authentication); sign-in is a manual browser step.
 2. **Git identity**: commits carry no agent identity in messages (see `git-commit-push`);
    nothing to configure beyond a normal user.
 3. `npm install`.

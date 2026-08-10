@@ -409,9 +409,11 @@ executable and `shellArgs` = the `run`/`exec` invocation. The native terminal ow
 real PTY (ConPTY on Windows), so ANSI, cursor control, resize, and interactive agents
 work with no native dependency (no `node-pty`). This satisfies FR-010/FR-011.
 
-The `sbx` executable is resolved at runtime: the Windows installer places it at
-`%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe` and does **not** add it to `PATH`, so
-`sbx.ts` checks that location first and falls back to the bare command name.
+The `sbx` executable is resolved at runtime, on every call (§4): the Windows installer places
+it at `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`, so `sbx.ts` checks that location first and
+falls back to the bare command name. Whether a `PATH` entry for that directory also exists
+varies by install and is **not** relied upon — and it would not help the case that matters
+anyway, a window already open when sbx was installed, whose environment block predates it.
 
 **Agent terminals are pooled per sandbox and reused** — a second `sbx run <name>` is not
 a separate instance, it's another attach session into the same microVM (shared
