@@ -6,6 +6,7 @@ import { ensureIdentity, readIdentity } from "./identity";
 import * as log from "./log";
 import * as names from "./names";
 import * as ops from "./ops";
+import * as prereq from "./prereq";
 import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 import { ensureProjectScript } from "./script";
@@ -43,6 +44,11 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("sandboxConsole.manageSecrets", () =>
       manageCachedSecrets().catch((err) => fail("manage cached secrets", err))
+    ),
+    // FR-059: what the warning indicator and the Sandboxes view's readiness node open, and
+    // a way to re-check after installing or signing in without reloading the window.
+    vscode.commands.registerCommand("sandboxConsole.checkPrerequisites", () =>
+      checkPrerequisites()
     ),
     vscode.commands.registerCommand("sandboxConsole.newSandbox", async () => {
       // Same preflight as every other command: without it a missing sbx CLI only
@@ -186,22 +192,33 @@ async function preflight(): Promise<vscode.Uri | undefined> {
     );
     return undefined;
   }
-  if (!(await sbx.available())) {
-    void vscode.window
-      .showErrorMessage(
-        'Sandbox Console: Docker Sandboxes (sbx) was not found. Install it, then run "sbx login".',
-        "Install instructions"
-      )
-      .then((choice) => {
-        if (choice === "Install instructions") {
-          void vscode.env.openExternal(
-            vscode.Uri.parse("https://docs.docker.com/ai/sandboxes/")
-          );
-        }
-      });
+  // FR-059: a missing prerequisite ends the action in a modal that names it. The check runs
+  // before the New Sandbox form opens, so nothing is written to `.sandbox/` for a sandbox
+  // that could not be created.
+  if (!(await prereq.requireSbx())) {
     return undefined;
   }
   return root;
+}
+
+/**
+ * FR-059: report host readiness on demand — the same modal the passive surfaces link to when
+ * something is missing, a plain confirmation when nothing is. Re-probing here is what makes
+ * an install or a `sbx login` take effect without reloading the window.
+ */
+async function checkPrerequisites(): Promise<void> {
+  const readiness = await prereq.sbxReadiness();
+  if (readiness.ok) {
+    vscode.window.showInformationMessage(
+      "Sandbox Console: Docker Sandboxes (sbx) is ready."
+    );
+  } else {
+    await prereq.showSbxProblem(readiness);
+  }
+  void refreshStatus();
+  void vscode.commands
+    .executeCommand("sandboxConsole.refresh")
+    .then(undefined, () => undefined);
 }
 
 /** The locally active sandbox key, if the user has picked one (FR-050). */
@@ -412,10 +429,25 @@ async function refreshStatus(): Promise<void> {
   const gen = ++statusGeneration;
   const stale = (): boolean => gen !== statusGeneration;
   const root = sandbox.workspaceRoot();
-  if (!root || !(await sbx.available())) {
+  if (!root) {
     if (!stale()) {
       statusItem.hide();
     }
+    return;
+  }
+  // FR-059: a host that cannot run sandboxes says so. Hiding made "sbx is not installed"
+  // and "this extension is not installed" look identical, and the only surface that
+  // explained the difference was a command the user had no reason to run.
+  const readiness = await prereq.sbxReadiness();
+  if (stale()) {
+    return;
+  }
+  if (!readiness.ok) {
+    setStatus(
+      "$(warning) Sandbox not available",
+      prereq.tooltip(readiness),
+      "sandboxConsole.checkPrerequisites"
+    );
     return;
   }
   let config;
@@ -465,9 +497,18 @@ async function refreshStatus(): Promise<void> {
       return;
     }
     state = await sandbox.state(ref);
-  } catch {
+  } catch (err) {
     if (!stale()) {
-      statusItem.hide(); // not signed in — stay quiet
+      // Readiness already passed, so this is not a missing prerequisite but a live CLI
+      // failure. Still not a reason to vanish (FR-059) — say the state is unknown and put
+      // the CLI output that produced it one click away (FR-055).
+      setStatus(
+        "$(warning) Sandbox not available",
+        `${
+          err instanceof Error ? err.message : String(err)
+        }\n\nClick to re-check prerequisites.`,
+        "sandboxConsole.checkPrerequisites"
+      );
     }
     return;
   }

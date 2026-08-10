@@ -88,6 +88,9 @@ executed by the extension), `sandbox.ts` (recipe→refs + naming + lifecycle), `
 spinners, the one-operation-per-sandbox guard FR-054 and cancellation FR-056),
 `git.ts` (read-only host git probes: `isShallowRepository` for the clone-mount preflight,
 FR-058 — never mutates a repo),
+`prereq.ts` (host readiness FR-059: classifies `sbx diagnose` into missing/signed-out/
+unhealthy, owns the shared modal refusal + status-bar tooltip, and answers the *separate*
+host-Docker question for the custom-image mode — sbx itself needs no Docker),
 `log.ts` (operation log FR-055: the `Sandbox Console` channel + the spawn runner every
 sbx/docker call streams through — process plumbing only, no CLI strings), `names.ts`
 (per-working-copy `workspaceState` record of sbx names that can no longer be created,
@@ -95,11 +98,11 @@ FR-057), `terminal.ts`
 (native terminals driving sbx + the one host terminal, `openHostCommandTerminal`, that
 types the FR-058 fix without running it), `form.ts` (webview Configure form), `tree.ts` (Sandbox
 Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
-Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
+Dependency direction: `extension → {ops, form, tree, prereq, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
 `ops → {images, secrets, sandbox, terminal, names, git, sbx, log}`; `git → log`;
-`tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
-`form → {ops, secrets, sandbox, config, identity, agents, names, script, sbx}`;
-`secrets → {blobs, sandbox, services, sbx}`; `script → config`;
+`tree → {ops, form, prereq, sandbox, config, identity, agents, sbx, log}`;
+`form → {ops, prereq, secrets, sandbox, config, identity, agents, names, script, sbx}`;
+`secrets → {blobs, sandbox, services, sbx}`; `script → config`; `prereq → {images, sbx}`;
 `sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`; `sbx → log`;
 nothing depends on `extension`.
 

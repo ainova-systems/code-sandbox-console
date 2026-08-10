@@ -15,28 +15,23 @@ import * as sbx from "./sbx";
 
 type RunResult = log.RunResult;
 
-let cachedDocker: string | undefined;
-
 /**
  * Resolve the docker executable. Docker Desktop on Windows isn't always on the PATH that
  * execFile sees, so check its default install location first; fall back to the bare name.
+ * Resolved on every call and never memoised, for the same reason as `sbxPath()` (FR-059):
+ * installing, moving or removing Docker must not require a window reload to be noticed.
  */
 function dockerPath(): string {
-  if (cachedDocker) {
-    return cachedDocker;
-  }
   if (process.platform === "win32") {
     const pf = process.env.ProgramFiles;
     const candidate = pf
       ? path.join(pf, "Docker", "Docker", "resources", "bin", "docker.exe")
       : undefined;
     if (candidate && existsSync(candidate)) {
-      cachedDocker = candidate;
-      return cachedDocker;
+      return candidate;
     }
   }
-  cachedDocker = process.platform === "win32" ? "docker.exe" : "docker";
-  return cachedDocker;
+  return process.platform === "win32" ? "docker.exe" : "docker";
 }
 
 /**
@@ -48,10 +43,47 @@ function docker(args: string[], opts?: log.RunOptions): Promise<RunResult> {
   return log.run(dockerPath(), args, opts);
 }
 
-/** True if host docker is invokable (required to build custom images). */
-export async function dockerAvailable(): Promise<boolean> {
-  const { code } = await docker(["--version"], { quiet: true });
-  return code === 0;
+/**
+ * Whether the host can build an image right now (FR-059). Host Docker is NOT a prerequisite
+ * of the product — upstream is explicit that "Docker Desktop is not required to use sbx",
+ * which runs its own daemon (Architecture §3) — it is required only by the two features
+ * that shell out to it: the custom-image build (FR-008) and the image refresh (FR-053).
+ *
+ * Two probes, because one cannot answer both questions: `docker --version` is served by the
+ * client alone, so it succeeds while the engine is stopped; `docker info` is the one that
+ * needs a reachable daemon, which is what a build actually requires. Reporting them apart
+ * keeps "install Docker" from being the advice when Docker is installed but not started.
+ */
+export type DockerState = "ready" | "engine-down" | "missing";
+
+export async function dockerState(): Promise<DockerState> {
+  if ((await docker(["--version"], { quiet: true })).code !== 0) {
+    return "missing";
+  }
+  return (await docker(["info"], { quiet: true })).code === 0
+    ? "ready"
+    : "engine-down";
+}
+
+/**
+ * What to tell the user about a host Docker that cannot build (FR-059). One sentence, shared
+ * by the build failure and the New/Edit form's hint, so the requirement is worded identically
+ * wherever it surfaces — the form shows it when the mode is chosen, the build if it changed
+ * since. Says that sbx itself is unaffected, so nobody concludes sandboxes need Docker.
+ */
+export function dockerRequirement(state: DockerState): string {
+  if (state === "engine-down") {
+    return (
+      "Docker is required to build a custom sandbox image, and `docker` is installed but " +
+      "its engine is not responding — start Docker Desktop and retry. Sandboxes on the " +
+      "default agent image do not need it."
+    );
+  }
+  return (
+    "Docker is required to build a custom sandbox image, but `docker` was not found. " +
+    "Install Docker Desktop or Docker Engine on the host. Sandboxes on the default agent " +
+    "image do not need it — sbx runs its own daemon."
+  );
 }
 
 /**
@@ -184,7 +216,7 @@ export async function refreshForRebuild(
       return true;
     }
     if (spec.image) {
-      if (!(await dockerAvailable())) {
+      if ((await dockerState()) !== "ready") {
         return false;
       }
       sbx.assertImageTag(spec.image);
@@ -252,10 +284,9 @@ export async function ensureImage(
   if (!opts?.rebuild && (await sbx.templateExists(spec.image))) {
     return;
   }
-  if (!(await dockerAvailable())) {
-    throw new Error(
-      "Docker is required to build a custom sandbox image, but `docker` was not found on PATH."
-    );
+  const host = await dockerState();
+  if (host !== "ready") {
+    throw new Error(dockerRequirement(host));
   }
   await buildAndLoad(spec, repoRoot, opts?.ctx);
 }
