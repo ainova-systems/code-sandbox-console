@@ -214,6 +214,9 @@ After creation:
 * Agent launches automatically
 * Terminal opens automatically
 
+A create is refused up front when the workspace cannot serve the sandbox's mount mode —
+network/WSL paths (FR-040) and a shallow repository under `mount: clone` (FR-058).
+
 ---
 
 ## FR-004 Sandbox Start
@@ -510,6 +513,31 @@ Examples:
 
 ---
 
+## FR-058 Clone Mount Preflight
+
+A sandbox shall never be created into a workspace its mount mode cannot serve.
+
+* **`mount: clone` requires an unshallowed repository.** sbx copies the repo into the
+  sandbox with `git clone --reference <read-only host mount>`, and git refuses a shallow
+  source (`--depth` clone or fetch). The create itself still succeeds, so the failure is
+  invisible from the extension: it happens inside the sandbox at start-up and leaves the
+  agent in an **empty workspace**.
+* Creating such a sandbox is therefore **refused before the first sbx call** — on Connect,
+  Shell and Rebuild alike — with a message that names the cause, the fix
+  (`git fetch --unshallow`, and what running it does to the working copy) and the
+  alternative (`mount: direct`, which clones nothing).
+* The extension does not run the fix: fetching the missing history changes what the user's
+  repository contains, so it is theirs to run (the same rule that keeps discovery
+  non-mutating, FR-002).
+* The check fails open — no git on the host, or a workspace outside any repository, does
+  not block a create. sbx rejects a non-repository workspace itself, before creating
+  anything; shallowness is the one precondition it does not check.
+* `mount: direct` is unaffected — nothing is cloned. An existing sandbox already created
+  this way is not repaired automatically: unshallow, then **Rebuild**.
+* The generated project CLI (FR-052) refuses the same case in its create path.
+
+---
+
 # 10. Sandbox Explorer
 
 A dedicated VS Code sidebar shall be available, **scoped to the current repo**.
@@ -616,6 +644,8 @@ subcommands instead of re-encoding naming/lifecycle/secret rules as prose
   passive open never adds it (FR-002).
 * The extension **never executes** the generated script — generation is one-way
   (a committed script is repo-controlled input).
+* Preconditions mirror the UI's: the create path refuses `mount: clone` on a shallow
+  repository with the same message and the same fail-open rule (FR-058).
 
 ## FR-053 Fresh Image Rebuild
 

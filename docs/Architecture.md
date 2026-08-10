@@ -75,6 +75,7 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
 | `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054) and cancellation at stage boundaries (FR-056) — §12. |
+| `git.ts` | Read-only host git probes (FR-058): `isShallowRepository` (`git rev-parse --is-shallow-repository`, resolved with `-C` so a workspace inside a repo works). Own module for the same reason `sbx.ts` is one — one place per external CLI's argv. Never mutates a repository. |
 | `log.ts` | The operation log (FR-055): the `Sandbox Console` output channel plus the `spawn`-based runner every `sbx`/`docker` call goes through — streams child output to the channel and to the progress notification, and kills the child on cancel. Process plumbing only: it knows no CLI strings. |
 | `names.ts` | The per-working-copy record of sbx names that can no longer be created (FR-057, §14): `workspaceState`-backed, written when a create fails with the leaked-state error, read by key derivation. Local by construction — it never reaches the committed recipe. |
 | `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. |
@@ -86,10 +87,10 @@ Dependency direction (verified against imports):
 `extension → {ops, form, tree, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
 `tree → {ops, form, sandbox, config, identity, agents, sbx, log}`;
 `form → {ops, secrets, sandbox, config, identity, agents, names, script, sbx}`;
-`ops → {images, secrets, sandbox, terminal, names, sbx, log}`;
+`ops → {images, secrets, sandbox, terminal, names, git, sbx, log}`;
 `terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
 `sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`;
-`sbx → log`; `script → config`; `identity → config`.
+`sbx → log`; `git → log`; `script → config`; `identity → config`.
 Nothing depends on `extension`; `config`, `agents`, `services`, `blobs`, `names`, and
 `log` are leaves.
 
@@ -118,6 +119,13 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 The UI labels the attach action **Connect** (the underlying sbx operation is still an
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
 first, then choosing the create form (`… <agent> <path>`) or the attach form (`… <name>`).
+
+**Preflight before the first sbx call.** Every create path (Connect, Shell, Rebuild)
+first checks that the workspace can serve the sandbox's mount mode: `hostToSandboxPath`
+rejects UNC/`\\wsl$` paths (FR-040), and `mount: clone` additionally requires a
+non-shallow repository (FR-058, §9). Rebuild runs both **before** its removal stage, so a
+refusal leaves the existing sandbox intact rather than deleting it and then declining to
+recreate it.
 
 There is **no implicit default sandbox**, and startup is **always quiet and read-only** —
 opening a workspace never raises notifications and **never writes into `.sandbox/`**
@@ -340,7 +348,11 @@ Provided by `sbx`, surfaced (not reimplemented) by the extension:
 - **Network policy** (Features §12) — host proxy enforces an allow-list; outbound hosts
   are logged/allowed/blocked.
 - **Filesystem policy** (Features §12) — *direct* mount (read-write workspace) vs
-  `--clone` (private in-container clone, host repo mounted read-only).
+  `--clone` (private in-container clone, host repo mounted read-only at
+  `/run/sandbox/source`). The clone is made by sbx at every start with
+  `git clone --reference <source> <source> <mirrored host path>` plus a `git daemon`
+  serving it back as the host remote `sandbox-<name>`; `--reference` is why the mode
+  needs a **non-shallow** repository, checked before the create (FR-058, §5, §14).
 - **Workspace mount path** — with direct mount on Windows, each host drive is mounted in
   the sandbox at `/<drive-letter>` (e.g. `D:\Repositories\app` → `/d/Repositories/app`),
   read-write and bidirectional. `sbx run` drops the agent there; `Shell` reaches it via
@@ -534,6 +546,10 @@ re-encoding these rules as prose and calls subcommands instead
   same logic runs with `createIfMissing: false` — an existing script is still refreshed on
   upgrade, but a missing one is **not** created merely by opening a project (spec 009;
   FR-002 read-only discovery). A sibling `.gitattributes` pins LF.
+- **Same preconditions as the UI.** The create path refuses `mount: clone` on a shallow
+  repository, with the same message and the same fail-open behaviour as `ops.ts`
+  (FR-058) — parity here is what keeps a script-driven create from producing the empty
+  workspace the UI now prevents.
 - **Runners.** `runner-create <slug>` instantiates the recipe's `default: true` entry as
   an **ephemeral** clone-mode instance `<name>-<key>-<id>-p<slug>` (agent/image/secret
   names/caps from the recipe; defaults `-m 8g --cpus 4`) — never written back into the
@@ -584,5 +600,17 @@ re-encoding these rules as prose and calls subcommands instead
   asked whether a name is claimed — `sbx ls` does not list it and `sbx rm` reports
   "not found". The record is local (`workspaceState`), stores names only, and becomes
   irrelevant after a `sbx reset`.
+- **A clone-mode create can still fail silently for reasons the host cannot see.** The
+  in-sandbox clone runs on every start, guarded by `[ ! -d "$TARGET/.git" ]`, and the
+  script pre-creates `$TARGET` before cloning into it. Anything that makes that one
+  `git clone --reference` fail therefore leaves an **empty workspace directory** the agent
+  is then dropped into, with the error only in sbx's start-up output (the agent terminal),
+  since `sbx create` itself exited 0. It never self-heals: as soon as the agent writes into
+  that directory, later starts fail on
+  `fatal: destination path … already exists and is not an empty directory` and the original
+  cause is lost. Shallow sources are the reachable case and are refused up front (FR-058);
+  the general case would need a post-create probe (`sbx exec … test -d <dest>/.git`), which
+  costs a started sandbox per create and reports only after the fact — deliberately not
+  built. Recovery for an already-wedged sandbox is **Rebuild** once the cause is removed.
 - **Deferred scope**: filesystem/network policy UIs (Features §12), MCP endpoints
   (Features §13), kit injection (§7).

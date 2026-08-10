@@ -317,7 +317,16 @@ create_instance() { # <key>
   agent=$(cfg_field "$key" agent); [ -n "$agent" ] || die "sandboxes.$key.agent missing"
   img=$(cfg_field "$key" image)
   local args=(create --name "$inst")
-  [ "$(cfg_field "$key" mount)" = "clone" ] && args+=(--clone)
+  if [ "$(cfg_field "$key" mount)" = "clone" ]; then
+    # FR-058: sbx copies the repo into the sandbox with "git clone --reference", which git
+    # refuses when the source is shallow — the sandbox would come up with an empty
+    # workspace, and the retry on every later start fails the other way ("not an empty
+    # directory"). Same preflight as ops.ts, same fix, and it fails open the same way.
+    if [ "$(git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+      die "sandboxes.$key uses mount: clone, but this repository is shallow (a --depth clone or fetch): git refuses to clone from it and the sandbox would start with an empty workspace. Run 'git fetch --unshallow' here — it downloads the missing history into this working copy — or set mount: direct"
+    fi
+    args+=(--clone)
+  fi
   [ -n "$img" ] && args+=(-t "$img")
   "$SBX" "\${args[@]}" "$agent" "$ROOT"
 }
