@@ -154,7 +154,7 @@ export async function openForm(
           // The panel stays open on failure — hand the form back to the user so the
           // corrected values can be re-submitted (FR-054).
           void panel.webview.postMessage({ type: "idle" });
-          if (!(err instanceof HandledError)) {
+          if (!(err instanceof ops.HandledError)) {
             vscode.window.showErrorMessage(
               `Sandbox Console: ${
                 err instanceof Error ? err.message : String(err)
@@ -378,8 +378,10 @@ function info(message: string): void {
   vscode.window.showInformationMessage(message);
 }
 
-/** Thrown after the user was already shown a notification (the panel stays open). */
-class HandledError extends Error {}
+/** Thrown after the user was already shown a notification (the panel stays open).
+ * Extends the shared sentinel so one `instanceof` covers this and the refusals `ops.ts`
+ * reports in a dialog of their own (FR-058). */
+class HandledError extends ops.HandledError {}
 
 /** Recipe keys and Dockerfile names become files under `.sandbox/` and docker-tag
  * components. No path separators and no leading "." — that is what makes traversal

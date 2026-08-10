@@ -130,6 +130,9 @@ export function deactivate(): void {
 }
 
 function fail(action: string, err: unknown): void {
+  if (err instanceof ops.HandledError) {
+    return; // already explained in its own dialog (FR-058) — a second toast adds nothing
+  }
   const msg = err instanceof Error ? err.message : String(err);
   // Only suggest "sbx login" when the CLI output actually points at auth — for build
   // or config failures the hint would send users down the wrong path.

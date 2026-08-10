@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as git from "./git";
 import * as images from "./images";
 import * as log from "./log";
 import * as names from "./names";
@@ -8,6 +9,7 @@ import * as secrets from "./secrets";
 import {
   disposeSandboxTerminals,
   openAgentAttach,
+  openHostCommandTerminal,
   openShell,
 } from "./terminal";
 
@@ -217,6 +219,64 @@ async function rollbackCreate(
 }
 
 /**
+ * Thrown after the user has already been shown what went wrong, so the command surfaces
+ * (palette, Explorer, form) must not report it a second time. The refusal below needs a
+ * dialog rather than the one-line failure notification those surfaces render, and it is
+ * reached from all three — showing it here is what keeps the three from drifting.
+ */
+export class HandledError extends Error {}
+
+const UNSHALLOW = "git fetch --unshallow";
+
+/**
+ * FR-058: the precondition `mount: clone` puts on the workspace, checked before the first
+ * sbx call — like the UNC translation above, and for the same reason: what it prevents
+ * cannot be repaired afterwards.
+ *
+ * sbx builds the sandbox's copy with `git clone --reference <read-only host mount>`, which
+ * git refuses when the source is shallow. The create still succeeds, so nothing here would
+ * notice: the failure happens inside the sandbox at start-up, scrolls past in the agent
+ * terminal, and leaves the agent in an empty workspace directory. Worse, it does not
+ * self-heal — once the agent writes anything into that directory, every later start fails
+ * on "already exists and is not an empty directory" instead, and the real cause is gone.
+ *
+ * Refuse, don't fix (spec 015): `git fetch --unshallow` changes what the user's working
+ * copy contains, so the extension never runs it. "Open terminal" types it into a host
+ * terminal at the repository and stops there — the Enter is the user's. Modal, because
+ * this ends the action the user just asked for and the explanation does not survive a
+ * notification's one-line clamp. `mount: direct` is untouched — it clones nothing.
+ */
+async function assertMountUsable(
+  ref: sandbox.SandboxRef,
+  workspace: string
+): Promise<void> {
+  if (ref.spec.mount !== "clone") {
+    return;
+  }
+  if (!(await git.isShallowRepository(workspace))) {
+    return;
+  }
+  const choice = await vscode.window.showErrorMessage(
+    `Cannot create ${ref.name}: this repository is shallow.`,
+    {
+      modal: true,
+      detail:
+        "This sandbox uses mount: clone, and Docker Sandboxes copies the repository into " +
+        "the sandbox with `git clone --reference`. Git refuses a shallow source (a " +
+        "--depth clone or fetch), so the sandbox would start with an empty workspace.\n\n" +
+        `Run "${UNSHALLOW}" in this repository to download the missing history — it ` +
+        "changes what your working copy contains, so it is left to you. Or set this " +
+        "sandbox to mount: direct, which needs no clone.",
+    },
+    "Open Terminal"
+  );
+  if (choice === "Open Terminal") {
+    openHostCommandTerminal(workspace, UNSHALLOW, "git fetch --unshallow");
+  }
+  throw new HandledError(`${ref.name}: shallow repository, mount: clone refused`);
+}
+
+/**
  * Create the sandbox (non-attaching) behind a progress spinner. Cancellable, with the
  * caveat that matters: the CLI is not killed (see `sbx.run`), so cancelling waits for the
  * create to finish and then removes it. The end state is what the user asked for — no
@@ -326,6 +386,7 @@ export async function createOrAttach(
         throw new Error("No workspace open.");
       }
       sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
+      await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace);
       if (ref.spec.secrets.length > 0) {
@@ -392,6 +453,15 @@ export async function rebuildRef(
     // What cancelling from the current stage leaves behind; undefined = nothing touched.
     let leftBehind: string | undefined;
     try {
+      // Both workspace checks run before the first destructive step, not next to the
+      // recreate they guard: a rebuild refused here leaves the existing sandbox alone,
+      // where the same refusal after the removal stage would leave the user with nothing.
+      const workspace = sandbox.workspacePath();
+      if (!workspace) {
+        throw new Error("No workspace open.");
+      }
+      sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
+      await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
       if (ref.spec.image && ref.spec.dockerfile) {
         await ensureImageForRef(ref, root.fsPath, true); // docker build --pull (FR-053)
       }
@@ -421,11 +491,6 @@ export async function rebuildRef(
           );
         }
       }
-      const workspace = sandbox.workspacePath();
-      if (!workspace) {
-        throw new Error("No workspace open.");
-      }
-      sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
       leftBehind = "Connect recreates the sandbox.";
       // Same create-then-attach as createOrAttach: `sbx create` honours --name where the
       // one-shot run create-form does not (see createOrAttach).
@@ -463,6 +528,7 @@ export async function shellRef(
     // Translate before any sbx mutation: throws a friendly error for UNC/WSL paths.
     const workspaceInside = sbx.hostToSandboxPath(workspace);
     if ((await sandbox.state(ref)) === "absent") {
+      await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace);
     }
