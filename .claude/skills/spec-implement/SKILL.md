@@ -26,7 +26,8 @@ CLAUDE.md is the rule surface - this skill sequences it, it does not replace it.
 4. **Respect the traps** (they are documented in CLAUDE.md, they bite anyway): esbuild does not
    typecheck - only `npm run verify` proves the code; there is no `sbx start` - resume is
    `sbx run`; `/home/agent/workspace` is a decoy - the real mount is the translated host path;
-   `sbx` is not on PATH on Windows.
+   never rely on `sbx` being on PATH on Windows (`sbxPath()` checks the install location
+   first, on every call - do not reintroduce a memo).
 5. **Protect the invariants**: attach ("Connect") stays the primary action when a sandbox
    exists; no implicit default sandbox; terminal-first (no chat panels); secrets only over
    stdin, never argv/env/image; argv allowlist and path containment stay intact.

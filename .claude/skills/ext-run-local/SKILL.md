@@ -10,9 +10,12 @@ running the extension and checking the FR's behaviour by hand.
 
 ## Prerequisites check
 
-- Docker Sandboxes installed and signed in. `sbx` is not on PATH on Windows - probe it at
-  `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe` (`sbx version`). Without it the extension loads
-  but every lifecycle action fails; layer-only changes can still be smoke-tested.
+- Docker Sandboxes installed and signed in. Do not rely on PATH on Windows - probe it at
+  `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe` (`sbx diagnose` reports binary, daemon and
+  sign-in in one go). Without it the extension loads and now says so - `⚠ Sandbox not
+  available` in the status bar, a readiness node in the Sandboxes view, a modal on New
+  Sandbox (FR-059) - while every lifecycle action stays blocked; layer-only changes can
+  still be smoke-tested.
 
 ## Steps
 

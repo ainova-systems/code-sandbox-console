@@ -50,9 +50,12 @@ There is no test runner yet; verification is `npm run verify` + manual run + dir
   one carve-out: the bash template in `src/script.ts` *renders* sbx calls into the
   generated `.sandbox/scripts/sbx.sh` (FR-052) for external shells; the extension
   never executes them, but keep the template in sync when CLI shapes change.
-- **`sbx` is not on PATH** (Windows): it lives at
-  `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`. `sbxPath()` resolves it; that same path
-  is used as the terminal `shellPath`.
+- **Never rely on `sbx` being on PATH** (Windows): it lives at
+  `%LOCALAPPDATA%\DockerSandboxes\bin\sbx.exe`, and `sbxPath()` checks that location
+  *before* PATH, on every call. A PATH entry may or may not exist (some installs have one),
+  and it never rescues a VS Code window that was already open when sbx was installed — that
+  process captured its environment beforehand. The resolved path doubles as the terminal
+  `shellPath`.
 - **There is no `sbx start`** — resume a stopped sandbox with `sbx run <name>` (or
   `sbx exec`, which auto-starts).
 - Lifecycle: Create/Attach → `sbx run`; Stop → `sbx stop`; destroy → `sbx rm --force`;
