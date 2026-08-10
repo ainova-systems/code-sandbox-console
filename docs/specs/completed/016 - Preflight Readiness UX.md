@@ -86,12 +86,14 @@ about sandboxes, not about a missing prerequisite.
   for *installed*, then `docker info` for *engine reachable*, because the client-only
   `--version` succeeds while the engine is stopped. The notice is advisory — the build stays
   the gate, since Docker Desktop may be started in between.
-- **A cached executable path can be re-resolved.** `sbxPath()`/`dockerPath()` cached their
-  result for the lifetime of the extension host, including the bare-name fallback taken when
-  nothing was found. A window that was already open when sbx was installed cannot reach it by
-  name either — its environment block, `PATH` included, was captured before the installer ran
-  — so the cached miss left the extension broken until a window reload. Only a **hit** is
-  cached now; a miss costs one `existsSync` per call.
+- **The executable is resolved on every call.** `sbxPath()`/`dockerPath()` memoised their
+  result for the lifetime of the extension host. Where the CLI lives is precisely what changes
+  under a running extension — an install, a move, an uninstall — and a remembered answer
+  survives all of them: a remembered *miss* kept a window that was open during an install
+  broken until reload (its environment block, `PATH` included, predates the installer), and a
+  remembered *hit* would outlive the binary it points at. Both caches are gone rather than
+  revalidated: if correctness needs an `existsSync` on every call anyway, the memo buys
+  nothing — and it sits in front of a `spawn` that costs three orders of magnitude more.
 
 ## Decisions
 

@@ -15,28 +15,22 @@ import * as sbx from "./sbx";
 
 type RunResult = log.RunResult;
 
-let cachedDocker: string | undefined;
-
 /**
  * Resolve the docker executable. Docker Desktop on Windows isn't always on the PATH that
  * execFile sees, so check its default install location first; fall back to the bare name.
+ * Resolved on every call and never memoised, for the same reason as `sbxPath()` (FR-059):
+ * installing, moving or removing Docker must not require a window reload to be noticed.
  */
 function dockerPath(): string {
-  if (cachedDocker) {
-    return cachedDocker;
-  }
   if (process.platform === "win32") {
     const pf = process.env.ProgramFiles;
     const candidate = pf
       ? path.join(pf, "Docker", "Docker", "resources", "bin", "docker.exe")
       : undefined;
     if (candidate && existsSync(candidate)) {
-      cachedDocker = candidate;
-      return cachedDocker;
+      return candidate;
     }
   }
-  // Not cached, for the same reason as `sbxPath()` (FR-059): a fallback is "not found
-  // here", and installing Docker must not require reloading the window to be noticed.
   return process.platform === "win32" ? "docker.exe" : "docker";
 }
 

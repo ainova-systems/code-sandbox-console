@@ -3,8 +3,6 @@ import * as path from "path";
 import * as fs from "fs";
 import * as log from "./log";
 
-let cachedPath: string | undefined;
-
 /**
  * Where the executable is looked for before falling back to PATH — the locations the
  * installer uses, empty where PATH is the only source. Exported so a "not found" message can
@@ -19,24 +17,20 @@ export function sbxCandidates(): string[] {
 
 /**
  * Resolve the `sbx` executable. On Windows the installer puts it under
- * %LOCALAPPDATA%\DockerSandboxes\bin but does NOT add it to PATH, so we look
- * there first and fall back to the bare command name (PATH installs on
- * macOS/Linux). The resolved path is also used as a terminal shellPath.
+ * %LOCALAPPDATA%\DockerSandboxes\bin, so we look there first and fall back to the bare
+ * command name (PATH). The resolved path is also used as a terminal shellPath.
+ *
+ * Resolved on every call, never memoised (FR-059). Where the CLI lives is exactly what
+ * changes under a running extension — an install, an uninstall, a move — and a remembered
+ * answer survives all three, which is what used to force a window reload after installing.
+ * The cost is one `existsSync` against a `spawn` that follows it, so there is nothing to buy.
  */
 export function sbxPath(): string {
-  if (cachedPath) {
-    return cachedPath;
-  }
   for (const candidate of sbxCandidates()) {
     if (fs.existsSync(candidate)) {
-      cachedPath = candidate;
-      return cachedPath;
+      return candidate;
     }
   }
-  // Deliberately NOT cached (FR-059): the fallback means "not found where we look", and a
-  // window that was already open when sbx was installed cannot reach it by name either — its
-  // environment block, PATH included, was captured before the installer ran. Caching the miss
-  // would keep that window broken until a reload. A miss costs one existsSync per call.
   return process.platform === "win32" ? "sbx.exe" : "sbx";
 }
 
