@@ -322,6 +322,9 @@ create_instance() { # <key>
     # refuses when the source is shallow — the sandbox would come up with an empty
     # workspace, and the retry on every later start fails the other way ("not an empty
     # directory"). Same preflight as ops.ts, same fix, and it fails open the same way.
+    # No "|| true" needed for that: this substitution sits in an if-condition, which set -e
+    # exempts, and its status is discarded by the enclosing test — a missing git or a
+    # non-repository yields "" and proceeds, exactly like the cfg_field test above.
     if [ "$(git -C "$ROOT" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
       die "sandboxes.$key uses mount: clone, but this repository is shallow (a --depth clone or fetch): git refuses to clone from it and the sandbox would start with an empty workspace. Run 'git fetch --unshallow' here — it downloads the missing history into this working copy — or set mount: direct"
     fi
