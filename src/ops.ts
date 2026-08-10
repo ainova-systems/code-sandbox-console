@@ -9,6 +9,7 @@ import * as secrets from "./secrets";
 import {
   disposeSandboxTerminals,
   openAgentAttach,
+  openHostCommandTerminal,
   openShell,
 } from "./terminal";
 
@@ -218,6 +219,16 @@ async function rollbackCreate(
 }
 
 /**
+ * Thrown after the user has already been shown what went wrong, so the command surfaces
+ * (palette, Explorer, form) must not report it a second time. The refusal below needs a
+ * dialog rather than the one-line failure notification those surfaces render, and it is
+ * reached from all three — showing it here is what keeps the three from drifting.
+ */
+export class HandledError extends Error {}
+
+const UNSHALLOW = "git fetch --unshallow";
+
+/**
  * FR-058: the precondition `mount: clone` puts on the workspace, checked before the first
  * sbx call — like the UNC translation above, and for the same reason: what it prevents
  * cannot be repaired afterwards.
@@ -230,8 +241,10 @@ async function rollbackCreate(
  * on "already exists and is not an empty directory" instead, and the real cause is gone.
  *
  * Refuse, don't fix (spec 015): `git fetch --unshallow` changes what the user's working
- * copy contains, so it is named, explained, and left to them. `mount: direct` is untouched
- * — it clones nothing.
+ * copy contains, so the extension never runs it. "Open terminal" types it into a host
+ * terminal at the repository and stops there — the Enter is the user's. Modal, because
+ * this ends the action the user just asked for and the explanation does not survive a
+ * notification's one-line clamp. `mount: direct` is untouched — it clones nothing.
  */
 async function assertMountUsable(
   ref: sandbox.SandboxRef,
@@ -243,15 +256,24 @@ async function assertMountUsable(
   if (!(await git.isShallowRepository(workspace))) {
     return;
   }
-  throw new Error(
-    `${ref.name} uses mount: clone, but this repository is shallow — its history was ` +
-      "truncated by a `--depth` clone or fetch. Docker Sandboxes copies the repo into " +
-      "the sandbox with `git clone --reference`, and git refuses a shallow source, so " +
-      "the sandbox would start with an empty workspace. Run `git fetch --unshallow` in " +
-      "the repository — it downloads the missing history into your working copy, which " +
-      "is why it is left to you — then try again. Or set this sandbox to mount: direct, " +
-      "which needs no clone."
+  const choice = await vscode.window.showErrorMessage(
+    `Cannot create ${ref.name}: this repository is shallow.`,
+    {
+      modal: true,
+      detail:
+        "This sandbox uses mount: clone, and Docker Sandboxes copies the repository into " +
+        "the sandbox with `git clone --reference`. Git refuses a shallow source (a " +
+        "--depth clone or fetch), so the sandbox would start with an empty workspace.\n\n" +
+        `Run "${UNSHALLOW}" in this repository to download the missing history — it ` +
+        "changes what your working copy contains, so it is left to you. Or set this " +
+        "sandbox to mount: direct, which needs no clone.",
+    },
+    "Open Terminal"
   );
+  if (choice === "Open Terminal") {
+    openHostCommandTerminal(workspace, UNSHALLOW, "git fetch --unshallow");
+  }
+  throw new HandledError(`${ref.name}: shallow repository, mount: clone refused`);
 }
 
 /**

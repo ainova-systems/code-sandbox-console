@@ -169,6 +169,25 @@ export function disposeSandboxTerminals(name: string): Promise<void> {
 }
 
 /**
+ * A plain **host** terminal at `cwd` with `command` typed in but NOT executed — the user
+ * presses Enter. Used by the FR-058 refusal to hand over `git fetch --unshallow` without
+ * running it: the extension never changes what a user's repository contains, and typing it
+ * for them removes the only friction that leaves.
+ *
+ * Deliberately not an sbx terminal: this runs on the host, in the user's own shell, so it
+ * carries no `shellPath` and is not pooled.
+ */
+export function openHostCommandTerminal(
+  cwd: string,
+  command: string,
+  name: string
+): void {
+  const terminal = vscode.window.createTerminal({ name, cwd });
+  terminal.show();
+  terminal.sendText(command, false); // false = type it, leave the Enter to the user
+}
+
+/**
  * Attach to an existing sandbox: `sbx run <name>` resumes the sandbox if stopped. Reuses a
  * live terminal (the same session) when present; otherwise launches the agent fresh. We do
  * NOT auto-pass `--continue`: closing a terminal ends that attach session, so forcing a

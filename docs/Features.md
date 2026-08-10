@@ -523,12 +523,14 @@ A sandbox shall never be created into a workspace its mount mode cannot serve.
   invisible from the extension: it happens inside the sandbox at start-up and leaves the
   agent in an **empty workspace**.
 * Creating such a sandbox is therefore **refused before the first sbx call** — on Connect,
-  Shell and Rebuild alike — with a message that names the cause, the fix
+  Shell and Rebuild alike — in a **modal dialog** that names the cause, the fix
   (`git fetch --unshallow`, and what running it does to the working copy) and the
-  alternative (`mount: direct`, which clones nothing).
+  alternative (`mount: direct`, which clones nothing). Modal because it ends the action the
+  user just asked for, and the explanation does not fit a notification's one line.
 * The extension does not run the fix: fetching the missing history changes what the user's
   repository contains, so it is theirs to run (the same rule that keeps discovery
-  non-mutating, FR-002).
+  non-mutating, FR-002). **Open Terminal** opens a host terminal in the repository with the
+  command typed in and *not* executed — the Enter stays with the user.
 * The check fails open — no git on the host, or a workspace outside any repository, does
   not block a create. sbx rejects a non-repository workspace itself, before creating
   anything; shallowness is the one precondition it does not check.

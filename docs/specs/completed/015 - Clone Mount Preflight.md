@@ -84,7 +84,10 @@ same way (run git with `cwd` = the workspace and let it walk up), not test the f
 - **The guard sits beside the existing UNC fail-fast in `ops.ts`.** `assertMountUsable`
   runs on every path that can *create* a sandbox (`createOrAttach`, `rebuildRef`,
   `shellRef`), gated on `ref.spec.mount === "clone"`; attaching to an existing sandbox does
-  not run it.
+  not run it. It shows its own modal and raises `ops.HandledError`; `extension.ts`,
+  `tree.ts` and `form.ts` skip that sentinel in their error reporters (form's local
+  `HandledError` now extends it, so one check covers both), so the dialog is not chased by
+  a duplicate toast. `terminal.ts` gained `openHostCommandTerminal` for the hand-off.
 - **Rebuild checks the workspace before it destroys anything.** Its workspace resolution,
   the UNC translation and the new preflight moved from just-before-recreate to the top of
   the operation — previously a workspace problem surfaced *after* `docker build` and
@@ -101,12 +104,16 @@ same way (run git with `cwd` = the workspace and let it walk up), not test the f
   clone actually materialise" probe would mean an `sbx exec` into a freshly started sandbox
   on every clone-mode create, and would report the failure only after the sandbox exists.
   Deferred; recorded in Architecture §14 with the failure it would catch.
-- **Refuse, don't fix — and say what the fix does.** The message explains the cause in one
-  line (the repository has a truncated history; sbx's clone borrows objects from it and git
-  refuses a shallow source), then names `git fetch --unshallow` and what running it means:
-  it downloads the missing history into this repository, and it is the user's call because
-  it changes what their repository contains. No button, no extension-run git: the same
-  reason discovery never writes (spec 009), applied to git state.
+- **Refuse, don't fix — and say what the fix does.** The refusal is a **modal** dialog: it
+  ends the action the user just asked for, and the explanation (truncated history; sbx's
+  clone borrows objects from it; git refuses a shallow source) does not survive a
+  notification's one-line clamp. It names `git fetch --unshallow` and what running it
+  means — it downloads the missing history into this repository, which is why it is the
+  user's call. **Open Terminal** opens a host terminal in the repository with the command
+  *typed but not executed*; the extension never runs git itself, the same reason discovery
+  never writes (spec 009), applied to git state. Showing the dialog inside `ops.ts` (and
+  raising the shared `HandledError` the surfaces skip) keeps the palette, the Explorer and
+  the form from each rendering their own version of it.
 - **Fail open when the probe cannot run.** If `git` is absent from the host, or the folder
   is not in a repository, the create proceeds. A false refusal would be worse than the
   failure it prevents, and nothing is lost: sbx refuses a non-repository workspace itself,

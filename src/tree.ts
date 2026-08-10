@@ -239,6 +239,9 @@ class SandboxExplorer implements vscode.TreeDataProvider<Node> {
 }
 
 function reportError(action: string, err: unknown): void {
+  if (err instanceof ops.HandledError) {
+    return; // already explained in its own dialog (FR-058) — a second toast adds nothing
+  }
   const msg = err instanceof Error ? err.message : String(err);
   // FR-055: the full CLI output that produced this message is one click away.
   void vscode.window

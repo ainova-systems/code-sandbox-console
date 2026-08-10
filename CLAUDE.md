@@ -92,7 +92,8 @@ FR-058 — never mutates a repo),
 sbx/docker call streams through — process plumbing only, no CLI strings), `names.ts`
 (per-working-copy `workspaceState` record of sbx names that can no longer be created,
 FR-057), `terminal.ts`
-(native terminals driving sbx), `form.ts` (webview Configure form), `tree.ts` (Sandbox
+(native terminals driving sbx + the one host terminal, `openHostCommandTerminal`, that
+types the FR-058 fix without running it), `form.ts` (webview Configure form), `tree.ts` (Sandbox
 Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
 Dependency direction: `extension → {ops, form, tree, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
 `ops → {images, secrets, sandbox, terminal, names, git, sbx, log}`; `git → log`;

@@ -74,11 +74,11 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
-| `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054) and cancellation at stage boundaries (FR-056) — §12. |
+| `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054), cancellation at stage boundaries (FR-056) — §12 — and the mount preflight (FR-058, §5) whose modal refusal it shows itself, raising the shared `HandledError` so no surface reports it twice. |
 | `git.ts` | Read-only host git probes (FR-058): `isShallowRepository` (`git rev-parse --is-shallow-repository`, resolved with `-C` so a workspace inside a repo works). Own module for the same reason `sbx.ts` is one — one place per external CLI's argv. Never mutates a repository. |
 | `log.ts` | The operation log (FR-055): the `Sandbox Console` output channel plus the `spawn`-based runner every `sbx`/`docker` call goes through — streams child output to the channel and to the progress notification, and kills the child on cancel. Process plumbing only: it knows no CLI strings. |
 | `names.ts` | The per-working-copy record of sbx names that can no longer be created (FR-057, §14): `workspaceState`-backed, written when a create fails with the leaked-state error, read by key derivation. Local by construction — it never reaches the committed recipe. |
-| `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. |
+| `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. Also opens the one **host** terminal the extension needs (`openHostCommandTerminal`): the FR-058 hand-off, which types `git fetch --unshallow` and leaves the Enter to the user. |
 | `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. |
 | `tree.ts` | Sandbox Explorer view + per-node commands (§12). |
 | `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. |
@@ -125,7 +125,10 @@ first checks that the workspace can serve the sandbox's mount mode: `hostToSandb
 rejects UNC/`\\wsl$` paths (FR-040), and `mount: clone` additionally requires a
 non-shallow repository (FR-058, §9). Rebuild runs both **before** its removal stage, so a
 refusal leaves the existing sandbox intact rather than deleting it and then declining to
-recreate it.
+recreate it. The shallow refusal is a modal dialog raised in `ops.ts` (one place for all
+three surfaces) offering **Open Terminal** — `git fetch --unshallow` typed into a host
+terminal, never executed — and then throws `ops.HandledError`, which every surface's
+error reporter skips so the dialog is not followed by a redundant toast.
 
 There is **no implicit default sandbox**, and startup is **always quiet and read-only** —
 opening a workspace never raises notifications and **never writes into `.sandbox/`**
