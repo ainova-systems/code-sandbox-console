@@ -37,6 +37,13 @@ interface SubmitPayload {
   secrets: string[];
   ports: number[];
   mount: string;
+  /**
+   * FR-060 hooks, one command per line (the textareas' raw text). Prefixed `hook*` because
+   * `services` already means the secret-service list on this form.
+   */
+  hookSetup: string;
+  hookStartup: string;
+  hookServices: string;
   isDefault: boolean;
 }
 
@@ -56,9 +63,25 @@ interface InitData {
   secrets: string[];
   ports: number[];
   mount: string;
+  hookSetup: string;
+  hookStartup: string;
+  hookServices: string;
   isDefault: boolean;
   /** FR-059: the host-Docker requirement of the Dockerfile mode; empty when a build can run. */
   dockerNotice: string;
+}
+
+/** FR-060: textarea text → command list. Blank lines are separators, not commands. */
+function hookLines(text: string | undefined): string[] {
+  return (text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+function sameHooks(a: string[] | undefined, b: string[]): boolean {
+  const left = a ?? [];
+  return left.length === b.length && left.every((v, i) => v === b[i]);
 }
 
 export async function openForm(
@@ -120,6 +143,9 @@ export async function openForm(
     secrets: current?.secrets ?? [],
     ports: current?.ports ?? [],
     mount: current?.mount ?? "direct",
+    hookSetup: (current?.setup ?? []).join("\n"),
+    hookStartup: (current?.startup ?? []).join("\n"),
+    hookServices: (current?.services ?? []).join("\n"),
     isDefault: current?.default ?? false,
     dockerNotice: dockerNotice ?? "",
   };
@@ -296,6 +322,9 @@ async function apply(
     image,
     dockerfile,
     mount: payload.mount === "clone" ? "clone" : "direct",
+    setup: hookLines(payload.hookSetup), // FR-060
+    startup: hookLines(payload.hookStartup),
+    services: hookLines(payload.hookServices),
     secrets: specSecrets,
     ports: payload.ports ?? [],
     default: payload.isDefault ? true : undefined,
@@ -373,9 +402,32 @@ async function apply(
     }
     return;
   }
-  // Only secrets/ports changed → apply live.
+  // Secrets/ports apply live.
   await secrets.ensureSecrets(ref);
   await publishPortsSafe(ref.name, spec.ports);
+  // FR-060: hooks are baked into the sandbox at creation, so an edited list reaches an
+  // existing sandbox only by re-applying its kit — which is cheap, unlike the Rebuild an
+  // image/mount change needs, so it is offered rather than demanded.
+  const startupChanged =
+    !sameHooks(oldSpec?.startup, spec.startup) ||
+    !sameHooks(oldSpec?.services, spec.services);
+  if (startupChanged) {
+    const choice = await vscode.window.showInformationMessage(
+      `Apply the changed startup hooks to ${ref.name} now? They run immediately, and a stopped sandbox is started to run them.`,
+      "Apply Hooks"
+    );
+    if (choice === "Apply Hooks") {
+      await ops.applyHooksRef(root, ref);
+    }
+    return;
+  }
+  if (!sameHooks(oldSpec?.setup, spec.setup)) {
+    // Nothing to apply: install commands are a creation-time phase by definition.
+    info(
+      `Applied changes to ${ref.name}. Setup hooks run once when a sandbox is created — Rebuild ${ref.name} to run the new ones.`
+    );
+    return;
+  }
   info(`Applied changes to ${ref.name}.`);
 }
 
@@ -573,6 +625,11 @@ const SCRIPT = `(function(){
 
   document.getElementById('mount').value = I.mount || 'direct';
 
+  // FR-060 hooks: plain text, one command per line — the host splits and trims.
+  document.getElementById('hookSetup').value = I.hookSetup || '';
+  document.getElementById('hookStartup').value = I.hookStartup || '';
+  document.getElementById('hookServices').value = I.hookServices || '';
+
   // FR-054 (UI half): a save can block for minutes on an image build, so the form shows
   // that it is working. The host already ignores a re-entrant submit — without this the
   // second click was silently dropped, which reads as "the button doesn't work".
@@ -581,7 +638,7 @@ const SCRIPT = `(function(){
   var statusEl = document.getElementById('status');
   var busyLabel = I.mode === 'edit' ? 'Applying\\u2026' : 'Creating\\u2026';
   function setBusy(on){
-    Array.prototype.forEach.call(document.querySelectorAll('input,select,button'), function(el){ el.disabled = on; });
+    Array.prototype.forEach.call(document.querySelectorAll('input,select,textarea,button'), function(el){ el.disabled = on; });
     saveBtn.textContent = on ? busyLabel : 'Save';
     // Cancel is disabled too: closing the panel would not stop the work. The way out is
     // the progress notification's own Cancel (FR-056).
@@ -612,6 +669,9 @@ const SCRIPT = `(function(){
       secrets: secrets,
       ports: ports,
       mount: document.getElementById('mount').value,
+      hookSetup: document.getElementById('hookSetup').value,
+      hookStartup: document.getElementById('hookStartup').value,
+      hookServices: document.getElementById('hookServices').value,
       isDefault: document.getElementById('isDefault').checked
     }});
     setBusy(true); // after reading the fields — disabled inputs still read fine, but order is clearer
@@ -622,7 +682,7 @@ function getHtml(data: InitData, nonce: string): string {
   const initJson = JSON.stringify(data).replace(/</g, "\\u003c");
   const sub =
     data.mode === "edit"
-      ? "Changes apply to this sandbox: secrets &amp; ports live; image/mount ask to rebuild."
+      ? "Changes apply to this sandbox: secrets &amp; ports live; hooks re-apply on request; image/mount ask to rebuild."
       : "Creates the sandbox. You'll be asked for any required secret values.";
   return `<!DOCTYPE html>
 <html lang="en">
@@ -640,9 +700,12 @@ function getHtml(data: InitData, nonce: string): string {
   .field:last-child{ margin-bottom:0; }
   .lbl{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--vscode-descriptionForeground); margin:0 0 6px; }
   .caption{ color:var(--vscode-descriptionForeground); font-size:11px; margin-top:6px; line-height:1.5; }
-  input[type=text],input[type=number],select{ width:100%; box-sizing:border-box; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border,transparent); border-radius:4px; padding:6px 8px; font-family:inherit; font-size:13px; outline:none; }
+  input[type=text],input[type=number],select,textarea{ width:100%; box-sizing:border-box; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border,transparent); border-radius:4px; padding:6px 8px; font-family:inherit; font-size:13px; outline:none; }
   select{ height:30px; }
-  input:focus,select:focus{ border-color:var(--vscode-focusBorder); }
+  /* Hooks are shell commands — read them in the editor's own monospace face (FR-060). */
+  textarea{ font-family:var(--vscode-editor-font-family,monospace); font-size:12px; resize:vertical; }
+  code{ font-family:var(--vscode-editor-font-family,monospace); }
+  input:focus,select:focus,textarea:focus{ border-color:var(--vscode-focusBorder); }
   .chips{ display:flex; flex-wrap:wrap; gap:6px 14px; }
   .chips.readonly{ gap:6px; }
   .badge{ display:inline-flex; align-items:center; background:var(--vscode-badge-background); color:var(--vscode-badge-foreground); border-radius:10px; padding:1px 9px; font-size:11px; }
@@ -730,6 +793,25 @@ function getHtml(data: InitData, nonce: string): string {
         <label class="lbl">Mount</label>
         <select id="mount"><option value="direct">direct</option><option value="clone">clone</option></select>
       </div>
+    </details>
+    <details>
+      <summary>Hooks — prepare the workspace, run services</summary>
+      <div class="field">
+        <label class="lbl">Setup · once, when the sandbox is created</label>
+        <textarea id="hookSetup" rows="2" spellcheck="false" placeholder="one command per line"></textarea>
+        <div class="hint">Runs under <code>sh</code>, with the network and <code>$SANDBOX_SOURCE</code> available. Under <b>mount: clone</b> the workspace does not exist yet — anything that touches it belongs in Startup.</div>
+      </div>
+      <div class="field">
+        <label class="lbl">Startup · every start, before the agent attaches</label>
+        <textarea id="hookStartup" rows="3" spellcheck="false" placeholder="e.g. bash $SANDBOX_SOURCE/.sandbox/sync.sh"></textarea>
+        <div class="hint">Runs under <code>bash -lc</code> and must be idempotent — it repeats on every start. A failing command does not stop the sandbox, but it does skip the commands after it (you get a warning).</div>
+      </div>
+      <div class="field">
+        <label class="lbl">Services · every start, in the background</label>
+        <textarea id="hookServices" rows="2" spellcheck="false" placeholder="e.g. docker compose -f deployment/docker-compose.yml up -d"></textarea>
+        <div class="hint">For processes that must be running while the agent works.</div>
+      </div>
+      <div class="hint"><code>$SANDBOX_WORKSPACE</code> is the workspace inside the sandbox, <code>$SANDBOX_SOURCE</code> the host working tree (read-only under <b>mount: clone</b> — where files git does not carry can be read from).</div>
     </details>
   </div>
   <div class="footer">

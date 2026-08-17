@@ -395,6 +395,16 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
           }
         })
     ),
+    // FR-060: hooks are baked in at create, so an edited recipe reaches an existing sandbox
+    // only by re-applying its kit. Offered per node because config.yaml is a file people
+    // edit by hand — a change made there has no form Save to hang the offer off.
+    vscode.commands.registerCommand(
+      "sandboxConsole.item.applyHooks",
+      (node?: SandboxNode) =>
+        withNode(node, "apply hooks", (root, ref) =>
+          ops.applyHooksRef(root, ref)
+        )
+    ),
     vscode.commands.registerCommand(
       "sandboxConsole.item.edit",
       (node?: SandboxNode) =>
@@ -438,6 +448,7 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
               }
             }
             await removeFromConfig(root, n.key);
+            await ops.removeHooks(root, n.key); // FR-060: its generated kit goes with it
           }
         })
     ),

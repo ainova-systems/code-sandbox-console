@@ -35,6 +35,17 @@ export interface SandboxSpec {
   context?: string;
   /** Filesystem policy. Default "direct". */
   mount: MountMode;
+  /**
+   * FR-060 lifecycle hooks, in the order sbx runs them. Commands run INSIDE the sandbox,
+   * never on the host; `$SANDBOX_WORKSPACE` / `$SANDBOX_SOURCE` make them mount-agnostic
+   * (kits.ts). Empty lists mean the sandbox behaves as it did before hooks existed.
+   */
+  /** Once at creation, under `sh`. No workspace yet under `mount: clone` — see kits.ts. */
+  setup: string[];
+  /** On every start, under `bash -lc`, before the agent attaches. Must be idempotent. */
+  startup: string[];
+  /** On every start, in the background — long-running services. */
+  services: string[];
   /** Service-secret names to provision (values via `sbx secret set`, never here). */
   secrets: string[];
   /** Ports to publish from the sandbox. */
@@ -135,6 +146,9 @@ function parseSpec(key: string, raw: unknown): SandboxSpec {
     dockerfile,
     context: optString(obj.context, `${at}.context`),
     mount: parseMount(obj.mount, `${at}.mount`),
+    setup: asStringArray(obj.setup, `${at}.setup`),
+    startup: asStringArray(obj.startup, `${at}.startup`),
+    services: asStringArray(obj.services, `${at}.services`),
     secrets: asStringArray(obj.secrets, `${at}.secrets`),
     ports: asNumberArray(obj.ports, `${at}.ports`),
     default: optBool(obj.default, `${at}.default`),
@@ -220,6 +234,17 @@ export async function writeConfig(
     }
     if (s.mount !== "direct") {
       entry.mount = s.mount;
+    }
+    // FR-060: written in run order (create → every start → every start, backgrounded), so
+    // the file reads the way the sandbox behaves.
+    if (s.setup.length > 0) {
+      entry.setup = s.setup;
+    }
+    if (s.startup.length > 0) {
+      entry.startup = s.startup;
+    }
+    if (s.services.length > 0) {
+      entry.services = s.services;
     }
     if (s.secrets.length > 0) {
       entry.secrets = s.secrets;

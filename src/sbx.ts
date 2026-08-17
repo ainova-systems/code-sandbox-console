@@ -198,6 +198,23 @@ export interface CreateOpts {
   clone?: boolean;
   /** -t custom image tag (FR-008). Must already be in the sbx store (build/load first). */
   image?: string;
+  /** --kit: directory holding the generated lifecycle-hook kit (FR-060, kits.ts). */
+  kit?: string;
+}
+
+/**
+ * A filesystem path the extension itself produced (a kit directory, a template tar) still
+ * enters argv, so it gets the same treatment as the config-derived values above: absolute,
+ * and never starting with "-" — the one shape that would turn a path into an option.
+ */
+function assertPathArg(value: string, what: string): string {
+  if (value.startsWith("-")) {
+    throw new Error(`invalid ${what} "${value}" (must not start with "-")`);
+  }
+  if (!path.isAbsolute(value)) {
+    throw new Error(`invalid ${what} "${value}" (must be an absolute path)`);
+  }
+  return value;
 }
 
 /** Create a sandbox without attaching (FR-003). Long (it may pull the image), so it takes
@@ -213,6 +230,12 @@ export async function create(
   }
   if (opts.image) {
     args.push("-t", assertImageTag(opts.image));
+  }
+  if (opts.kit) {
+    // FR-060: hooks can only be attached at creation — `--kit` against an existing sandbox
+    // is refused by the CLI ("can only be used when creating a new sandbox"), which is why
+    // changing them later goes through `kitAdd`.
+    args.push("--kit", assertPathArg(opts.kit, "kit directory"));
   }
   args.push(assertAgentId(opts.agent), opts.workspace);
   const { stderr, code } = await run(args, ctx);
@@ -427,6 +450,110 @@ export async function templateRemove(
   if (code !== 0) {
     throw new Error(stderr.trim() || `sbx template rm failed for ${tag}`);
   }
+}
+
+/**
+ * Validate a generated kit directory (FR-060). Returns the CLI's own verdict text rather
+ * than throwing: kits.ts turns it into the user-facing refusal, and this stays a wrapper.
+ */
+export async function kitValidate(
+  dir: string
+): Promise<{ ok: boolean; message: string }> {
+  const { stdout, stderr, code } = await probe([
+    "kit",
+    "validate",
+    assertPathArg(dir, "kit directory"),
+  ]);
+  // `kit validate` prints its verdict ("INVALID: …") on stdout and a terse
+  // "ERROR: artifact validation failed" on stderr, so prefer stdout for the reason.
+  const message = (stdout.trim() || stderr.trim())
+    .split(/\r?\n/)
+    .filter((line) => !/^ERROR: artifact validation failed$/.test(line.trim()))
+    .join("\n")
+    .replace(/^INVALID:\s*/, "")
+    .trim();
+  return { ok: code === 0, message };
+}
+
+/**
+ * Apply a kit to an existing sandbox (FR-060) — the way changed hooks reach a sandbox that
+ * already exists, since `--kit` is create-only. Verified on v0.31.3: re-adding a kit under
+ * the SAME name runs its startup commands once and replaces that kit's dispatcher entry, so
+ * hooks are not stacked into duplicates by repeated applies.
+ */
+export async function kitAdd(
+  name: string,
+  dir: string,
+  ctx?: log.OpContext
+): Promise<void> {
+  const { stderr, code } = await run(
+    ["kit", "add", assertSandboxName(name), assertPathArg(dir, "kit directory")],
+    ctx
+  );
+  if (code !== 0) {
+    throw new Error(stderr.trim() || `sbx kit add failed for ${name}`);
+  }
+}
+
+/** Where sbx's startup dispatcher records every run (the path the CLI itself prints). */
+const STARTUP_LOG = "/var/log/sbx-kit-startup.log";
+
+export interface StartupRun {
+  /** The dispatcher's lines for the most recent start, verbatim. */
+  text: string;
+  /** `fail <script> exit=<n>` lines; empty when every hook succeeded. */
+  failures: string[];
+  /** When the dispatcher started this run (ms since epoch), if its header parsed. */
+  at?: number;
+  /** True once the dispatcher reported it got through every hook. */
+  complete: boolean;
+}
+
+/**
+ * Read the most recent startup-hook run out of a **running** sandbox (FR-060).
+ *
+ * This is the only signal that exists: a failing startup command does NOT fail the start —
+ * verified on v0.31.3, `sbx create`/start still exits 0 and the sandbox runs — and the
+ * dispatcher stops without running the hooks after it. Callers must check the sandbox is
+ * running first: `sbx exec` would otherwise START a stopped sandbox just to read a log.
+ *
+ * Returns undefined when there is no log (no kit, or the sandbox never started one).
+ */
+export async function startupRun(
+  name: string
+): Promise<StartupRun | undefined> {
+  const { stdout, code } = await probe([
+    "exec",
+    assertSandboxName(name),
+    "bash",
+    "-lc",
+    `cat ${STARTUP_LOG}`,
+  ]);
+  if (code !== 0) {
+    return undefined;
+  }
+  const lines = stdout.split(/\r?\n/);
+  // The file accumulates one block per start; only the newest one describes this start.
+  let from = 0;
+  lines.forEach((line, i) => {
+    if (line.startsWith("=== dispatcher run")) {
+      from = i;
+    }
+  });
+  const block = lines.slice(from).filter((line) => line.trim() !== "");
+  if (block.length === 0) {
+    return undefined;
+  }
+  // `=== dispatcher run 2026-08-17T18:23:06Z ===` — the timestamp is what lets a caller
+  // tell this start's run from the previous one still sitting in the file.
+  const stamp = /^=== dispatcher run (\S+)/.exec(block[0]);
+  const at = stamp ? Date.parse(stamp[1]) : NaN;
+  return {
+    text: block.join("\n"),
+    failures: block.filter((line) => /^fail\s/.test(line)),
+    at: Number.isNaN(at) ? undefined : at,
+    complete: block.some((line) => line.startsWith("=== dispatcher complete")),
+  };
 }
 
 export interface SecretEntry {

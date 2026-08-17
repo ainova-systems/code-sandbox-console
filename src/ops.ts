@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as git from "./git";
 import * as images from "./images";
+import * as kits from "./kits";
 import * as log from "./log";
 import * as names from "./names";
 import * as sandbox from "./sandbox";
@@ -277,6 +278,99 @@ async function assertMountUsable(
 }
 
 /**
+ * FR-060: regenerate this sandbox's lifecycle-hook kit and validate it — in the same
+ * preflight band as the two refusals above, and before the first mutation, because `--kit`
+ * is create-only: a kit rejected halfway through would leave a sandbox that can never get
+ * its hooks without being recreated. Returns the directory for `sbx create --kit`, or
+ * undefined when the sandbox declares no hooks (then no kit exists and none is passed).
+ */
+async function prepareHooks(
+  root: vscode.Uri,
+  ref: sandbox.SandboxRef,
+  workspace: string
+): Promise<string | undefined> {
+  const dir = await kits.ensureKit(root, {
+    spec: ref.spec,
+    sandboxName: ref.name,
+    workspaceInside: sbx.hostToSandboxPath(workspace),
+  });
+  if (dir) {
+    await kits.assertValid(dir);
+  }
+  return dir;
+}
+
+/** How long to wait for the startup dispatcher to finish before giving up on reporting. */
+const STARTUP_REPORT_MS = 90_000;
+/** Tolerance for host/VM clock skew when deciding whether a run is this start's. */
+const STARTUP_CLOCK_SKEW_MS = 60_000;
+
+/**
+ * FR-060: say what the startup hooks did. Call with `void` after a start.
+ *
+ * This exists because sbx will not tell anyone otherwise: a failing startup command does
+ * **not** fail the start (verified — create/start exits 0 and the sandbox runs), the
+ * dispatcher stops without running the hooks after it, and the only trace is a log file
+ * inside the VM. An agent then works in a workspace that was never prepared, and nothing
+ * on screen says so.
+ *
+ * `startedAt` is when the caller started the sandbox: the log accumulates one block per
+ * start, so the block's own timestamp is what distinguishes this start's run from the
+ * previous one still sitting in the file.
+ */
+export async function reportStartupHooks(
+  root: vscode.Uri,
+  ref: sandbox.SandboxRef,
+  startedAt: number
+): Promise<void> {
+  if (ref.spec.startup.length === 0 && ref.spec.services.length === 0) {
+    return;
+  }
+  const deadline = Date.now() + STARTUP_REPORT_MS;
+  let run: sbx.StartupRun | undefined;
+  while (Date.now() < deadline && !run) {
+    let running = false;
+    try {
+      running = (await sbx.stateOf(ref.name)) === "running";
+    } catch {
+      // transient CLI error — try again
+    }
+    if (running) {
+      // `startupRun` uses `sbx exec`, which would START a stopped sandbox; the state check
+      // above is what keeps this read-only.
+      const latest = await sbx.startupRun(ref.name).catch(() => undefined);
+      const fresh =
+        latest !== undefined &&
+        (latest.at === undefined ||
+          latest.at >= startedAt - STARTUP_CLOCK_SKEW_MS);
+      if (latest && fresh && (latest.complete || latest.failures.length > 0)) {
+        run = latest;
+        break;
+      }
+    }
+    await sleep(1500);
+  }
+  if (!run) {
+    return; // still running after the deadline, or nothing recognisable to report
+  }
+  log.block(`startup hooks — ${ref.name}`, run.text);
+  if (run.failures.length === 0) {
+    return;
+  }
+  const choice = await vscode.window.showWarningMessage(
+    `Startup hooks failed for ${ref.name}. The sandbox started anyway and the hooks after ` +
+      "the failure were skipped — the workspace may not be prepared.",
+    "Show Log",
+    "Open Shell"
+  );
+  if (choice === "Show Log") {
+    log.show();
+  } else if (choice === "Open Shell") {
+    void shellRef(root, ref);
+  }
+}
+
+/**
  * Create the sandbox (non-attaching) behind a progress spinner. Cancellable, with the
  * caveat that matters: the CLI is not killed (see `sbx.run`), so cancelling waits for the
  * create to finish and then removes it. The end state is what the user asked for — no
@@ -284,12 +378,13 @@ async function assertMountUsable(
  */
 async function createSandbox(
   ref: sandbox.SandboxRef,
-  workspace: string
+  workspace: string,
+  kit?: string
 ): Promise<void> {
   try {
     await withProgress(
       `Creating sandbox ${ref.name}…`,
-      (ctx) => sandbox.create(ref, workspace, ctx),
+      (ctx) => sandbox.create(ref, workspace, ctx, kit),
       {
         cancellable: true,
         busyFor: ref.name,
@@ -380,15 +475,18 @@ export async function createOrAttach(
   ref: sandbox.SandboxRef
 ): Promise<void> {
   await exclusive(ref.name, "Connect", async () => {
-    if ((await sandbox.state(ref)) === "absent") {
+    const before = await sandbox.state(ref);
+    const startedAt = Date.now();
+    if (before === "absent") {
       const workspace = sandbox.workspacePath();
       if (!workspace) {
         throw new Error("No workspace open.");
       }
       sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
+      const kit = await prepareHooks(root, ref, workspace); // FR-060
       await ensureImageForRef(ref, root.fsPath);
-      await createSandbox(ref, workspace);
+      await createSandbox(ref, workspace, kit);
       if (ref.spec.secrets.length > 0) {
         await secrets.ensureSecrets(ref); // exists before per-sandbox secret set
       }
@@ -403,6 +501,11 @@ export async function createOrAttach(
       openAgentAttach(ref);
     }
     void publishPortsWhenReady(ref.name, ref.spec.ports);
+    // FR-060: only a start replays the startup hooks. Attaching to an already-running
+    // sandbox runs nothing, so reporting there would surface a previous start's outcome.
+    if (before !== "running") {
+      void reportStartupHooks(root, ref, startedAt);
+    }
   });
 }
 
@@ -462,6 +565,7 @@ export async function rebuildRef(
       }
       sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
+      const kit = await prepareHooks(root, ref, workspace); // FR-060, before the removal
       if (ref.spec.image && ref.spec.dockerfile) {
         await ensureImageForRef(ref, root.fsPath, true); // docker build --pull (FR-053)
       }
@@ -494,13 +598,15 @@ export async function rebuildRef(
       leftBehind = "Connect recreates the sandbox.";
       // Same create-then-attach as createOrAttach: `sbx create` honours --name where the
       // one-shot run create-form does not (see createOrAttach).
-      await createSandbox(ref, workspace);
+      const startedAt = Date.now();
+      await createSandbox(ref, workspace, kit);
       leftBehind = undefined;
       if (ref.spec.secrets.length > 0) {
         await secrets.ensureSecrets(ref);
       }
       openAgentAttach(ref);
       void publishPortsWhenReady(ref.name, ref.spec.ports);
+      void reportStartupHooks(root, ref, startedAt); // FR-060
     } catch (err) {
       // Re-raise with the state note; `exclusive` renders it as one message. A detail the
       // stage already set (the create rollback) is more specific — keep it.
@@ -527,10 +633,13 @@ export async function shellRef(
     }
     // Translate before any sbx mutation: throws a friendly error for UNC/WSL paths.
     const workspaceInside = sbx.hostToSandboxPath(workspace);
-    if ((await sandbox.state(ref)) === "absent") {
+    const before = await sandbox.state(ref);
+    const startedAt = Date.now();
+    if (before === "absent") {
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
+      const kit = await prepareHooks(root, ref, workspace); // FR-060
       await ensureImageForRef(ref, root.fsPath);
-      await createSandbox(ref, workspace);
+      await createSandbox(ref, workspace, kit);
     }
     if (ref.spec.secrets.length > 0) {
       // Same FR-032 re-check as createOrAttach: prompts only for missing secrets.
@@ -538,5 +647,65 @@ export async function shellRef(
     }
     openShell(ref, workspaceInside);
     void publishPortsWhenReady(ref.name, ref.spec.ports);
+    if (before !== "running") {
+      void reportStartupHooks(root, ref, startedAt); // FR-060 (`exec` auto-starts too)
+    }
+  });
+}
+
+/**
+ * FR-060: drop a sandbox's generated kit when its definition is removed. Routed through
+ * ops so the Explorer keeps its existing dependency surface (tree → ops), and best-effort:
+ * a leftover directory under `.sandbox/kits/` is gitignored noise, never a broken sandbox.
+ */
+export function removeHooks(root: vscode.Uri, key: string): Promise<void> {
+  return kits.removeKit(root, key);
+}
+
+/**
+ * FR-060: push edited hooks into a sandbox that already exists. `--kit` is create-only, so
+ * this is `sbx kit add`, which re-runs the kit's startup commands once and — because the
+ * kit carries the sandbox's own name — replaces its dispatcher entry instead of stacking a
+ * duplicate. That is what keeps a changed command from costing a Rebuild.
+ *
+ * Two honest limits, both surfaced rather than worked around: applying to a **stopped**
+ * sandbox starts it (verified — `kit add` boots the VM to run the commands), and hooks
+ * cannot be *removed* from a live sandbox, because sbx has no command that detaches a kit.
+ */
+export async function applyHooksRef(
+  root: vscode.Uri,
+  ref: sandbox.SandboxRef
+): Promise<void> {
+  await exclusive(ref.name, "Apply hooks", async () => {
+    const workspace = sandbox.workspacePath();
+    if (!workspace) {
+      throw new Error("No workspace open.");
+    }
+    if ((await sandbox.state(ref)) === "absent") {
+      void vscode.window.showInformationMessage(
+        `${ref.name} does not exist yet — Connect creates it with its hooks applied.`
+      );
+      return;
+    }
+    if (!kits.hasHooks(ref.spec)) {
+      void vscode.window.showInformationMessage(
+        `${ref.name} declares no hooks. Removing hooks from a sandbox that already has ` +
+          "them needs a Rebuild — sbx cannot detach a kit from a live sandbox."
+      );
+      return;
+    }
+    const kit = await prepareHooks(root, ref, workspace);
+    if (!kit) {
+      return;
+    }
+    // No startup-log poll afterwards: `kit add` runs the commands itself and prints them
+    // (its output streams into the log through the operation context, FR-055) instead of
+    // going through the boot dispatcher, so there is no new dispatcher block to read.
+    await withProgress(`Applying hooks to ${ref.name}…`, (ctx) =>
+      sbx.kitAdd(ref.name, kit, ctx)
+    );
+    void vscode.window.showInformationMessage(
+      `Hooks applied to ${ref.name}.`
+    );
   });
 }

@@ -307,6 +307,9 @@ sandboxes:
     image: myrepo-dev:latest  # optional custom image
     dockerfile: Dockerfile    # optional; if set → build `image` from .sandbox/Dockerfile
     mount: direct             # optional: direct | clone
+    setup: []                 # optional: commands run once at creation (FR-060)
+    startup: []               # optional: commands run on every start, before the agent
+    services: []              # optional: commands run on every start, in the background
     secrets: [github]         # secret NAMES only (values via FR-032)
     ports: [5000, 5173]       # optional published ports
     default: true             # optional: the sandbox the status bar / palette target (FR-050)
@@ -590,6 +593,55 @@ never fall silent and never claim the repo has no sandboxes.
 
 ---
 
+## FR-060 Lifecycle Hooks
+
+A sandbox shall be able to **prepare its own workspace and run its own services**, declared
+once in the recipe instead of typed into a terminal after every start.
+
+* Three optional lists of shell commands per sandbox in `.sandbox/config.yaml` (FR-009),
+  named after when they run:
+  * **`setup`** — once, when the sandbox is created. The network and the host tree are
+    available; under `mount: clone` the **workspace is not** (the clone is made later), so
+    repo-dependent work does not belong here. Runs under `sh`.
+  * **`startup`** — on every start, **before the agent attaches**, under `bash -lc`. Must be
+    idempotent; this is where a workspace is brought up to date.
+  * **`services`** — on every start, in the background: processes that must be running while
+    the agent works. This is the restart policy `sbx` itself does not have.
+* **Mount-agnostic by construction.** Every hook sees `$SANDBOX_WORKSPACE` (the workspace
+  inside the sandbox), `$SANDBOX_SOURCE` (the host working tree — read-only at
+  `/run/sandbox/source` under `mount: clone`, the workspace itself under `direct`),
+  `$SANDBOX_NAME` and `$SANDBOX_KEY`, so one command line works under both mount modes.
+  `$SANDBOX_SOURCE` is what makes a clone usable for repositories whose work needs files git
+  does not carry — `.env.local`, generated configuration, data directories — without the
+  extension ever writing into the user's working tree.
+* **The user maintains commands, not machinery.** The hooks are carried into the sandbox as
+  a generated `sbx` **kit** under `.sandbox/kits/<key>/`, which is gitignored, regenerated
+  from the recipe, and never hand-edited. A command that invokes a committed script
+  (`bash $SANDBOX_SOURCE/.sandbox/sync.sh`) re-reads that script on every start, so editing
+  the script needs no further action.
+* **Failures are reported, never swallowed.** A failing `setup` command fails the create
+  itself (sbx says which command and its exit code, and leaves no sandbox behind). A failing
+  `startup`/`services` command does **not** fail the start — the sandbox comes up and the
+  hooks after it are skipped — so the extension reads the sandbox's own startup log into the
+  operation log (FR-055) and raises a warning naming the sandbox, with **Show Log** and
+  **Open Shell**.
+* **Changing hooks does not cost a Rebuild.** They are baked in at creation, so an edited
+  list is pushed to an existing sandbox by re-applying its kit: the Edit form offers it on
+  Save, and **Apply Hooks** on the Explorer node does it for a recipe edited by hand.
+  Applying starts a stopped sandbox (the commands run immediately). Removing hooks from a
+  sandbox that already has them needs a Rebuild — sbx cannot detach a kit.
+* The generated project CLI (FR-052) renders the same kit and passes it on create, so a
+  sandbox created from an external shell gets the same hooks.
+* **Never a place for secret values.** Hooks live in the committed recipe and sbx echoes
+  them into the create output, hence into the operation log — credentials go through
+  FR-032/FR-051, and a hook consumes them the way any other in-sandbox process does. Hook
+  commands run inside the microVM only; the extension never executes them on the host.
+* The kit is validated (`sbx kit validate`) before anything is created, in the same
+  preflight band as FR-040/FR-058. `sbx kit` is an experimental upstream command; a schema
+  it stops accepting is refused with the CLI's own message instead of failing mid-create.
+
+---
+
 # 10. Sandbox Explorer
 
 A dedicated VS Code sidebar shall be available, **scoped to the current repo**.
@@ -676,7 +728,7 @@ Refresh
 ```
 
 Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
-`Rebuild`, `Edit`, `Delete instance`, `Remove from config`.
+`Rebuild`, `Apply Hooks` (FR-060), `Edit`, `Delete instance`, `Remove from config`.
 
 There is no separate Start/Restart/Delete palette command.
 
@@ -704,6 +756,9 @@ subcommands instead of re-encoding naming/lifecycle/secret rules as prose
   (a committed script is repo-controlled input).
 * Preconditions mirror the UI's: the create path refuses `mount: clone` on a shallow
   repository with the same message and the same fail-open rule (FR-058).
+* Lifecycle hooks mirror the UI's too: the create path renders the same kit from the
+  recipe and passes it with `--kit` (FR-060), so a sandbox created from a shell is not a
+  hookless one.
 
 ## FR-053 Fresh Image Rebuild
 

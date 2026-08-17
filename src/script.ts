@@ -197,6 +197,18 @@ cfg_default_key() {
   ' "$CFG"
 }
 
+cfg_list() { # <key> <field> — items of a block sequence (the shape the extension writes)
+  awk -v key="$1" -v field="$2" '
+    /^sandboxes:/ {insb=1; next}
+    insb && /^[^ ]/ {insb=0}
+    insb && $0=="  " key ":" {inkey=1; next}
+    inkey && /^  [^ ]/ {inkey=0; inlist=0}
+    inkey && index($0, "    " field ":")==1 {inlist=1; next}
+    inlist && /^      - / {s=$0; sub(/^ +- +/,"",s); print s; next}
+    inlist && /^    [^ ]/ {inlist=0}
+  ' "$CFG" | unquote
+}
+
 cfg_has_secret() { # <key> <service>
   local v
   v=$(awk -v key="$1" -v svc="$2" '
@@ -311,8 +323,55 @@ refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtaina
     while read -r t; do "$SBX" template rm "$t" || true; done
 }
 
+# ---- lifecycle hooks (FR-060: mirror of kits.ts) ---------------------------------------
+
+# A YAML single-quoted scalar: the only escape inside one is a doubled quote, so a command
+# containing anything shell-ish still survives the round trip into the kit.
+yaml_q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+
+write_kit() { # <key> — render the hook kit; print its directory, or nothing when hookless
+  local key="$1" dir="$ROOT/.sandbox/kits/$1" inst ws src
+  if [ -z "$(cfg_list "$key" setup)$(cfg_list "$key" startup)$(cfg_list "$key" services)" ]; then
+    return 0
+  fi
+  inst=$(instance_name "$key")
+  # In Git Bash $ROOT already IS the in-sandbox path (/d/...); under mount: clone the host
+  # tree is mounted read-only at a fixed path instead.
+  ws="$ROOT"
+  if [ "$(cfg_field "$key" mount)" = "clone" ]; then src=/run/sandbox/source; else src="$ROOT"; fi
+  mkdir -p "$dir"
+  {
+    printf 'schemaVersion: "1"\\nkind: mixin\\nname: %s\\n' "$inst"
+    printf 'description: Lifecycle hooks for %s (FR-060)\\ncommands:\\n' "$key"
+    if [ -n "$(cfg_list "$key" setup)" ]; then
+      printf '  install:\\n'
+      cfg_list "$key" setup | while IFS= read -r c; do
+        printf '    - command: %s\\n      user: "1000"\\n' "$(yaml_q "$c")"
+      done
+    fi
+    if [ -n "$(cfg_list "$key" startup)$(cfg_list "$key" services)" ]; then
+      printf '  startup:\\n'
+      cfg_list "$key" startup | while IFS= read -r c; do
+        printf '    - command: ["bash", "-lc", %s]\\n      user: "1000"\\n' "$(yaml_q "$c")"
+      done
+      cfg_list "$key" services | while IFS= read -r c; do
+        printf '    - command: ["bash", "-lc", %s]\\n      user: "1000"\\n      background: true\\n' "$(yaml_q "$c")"
+      done
+    fi
+    printf 'environment:\\n  variables:\\n'
+    printf '    SANDBOX_WORKSPACE: %s\\n' "$(yaml_q "$ws")"
+    printf '    SANDBOX_SOURCE: %s\\n' "$(yaml_q "$src")"
+    printf '    SANDBOX_NAME: %s\\n' "$(yaml_q "$inst")"
+    printf '    SANDBOX_KEY: %s\\n' "$(yaml_q "$key")"
+  } > "$dir/spec.yaml"
+  # Generated artefact, like the extension's: regenerated from the recipe, never committed.
+  grep -qx 'kits/' "$ROOT/.sandbox/.gitignore" 2>/dev/null \\
+    || printf 'kits/\\n' >> "$ROOT/.sandbox/.gitignore"
+  printf '%s' "$dir"
+}
+
 create_instance() { # <key>
-  local key="$1" inst agent img
+  local key="$1" inst agent img kit
   inst=$(instance_name "$key")
   agent=$(cfg_field "$key" agent); [ -n "$agent" ] || die "sandboxes.$key.agent missing"
   img=$(cfg_field "$key" image)
@@ -331,6 +390,11 @@ create_instance() { # <key>
     args+=(--clone)
   fi
   [ -n "$img" ] && args+=(-t "$img")
+  # FR-060: hooks can only be attached at creation, so they are rendered here and passed
+  # with --kit — a sandbox created from this script gets the same hooks as one created
+  # from the Explorer.
+  kit=$(write_kit "$key")
+  [ -n "$kit" ] && args+=(--kit "$kit")
   "$SBX" "\${args[@]}" "$agent" "$ROOT"
 }
 

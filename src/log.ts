@@ -64,6 +64,22 @@ export function opaqueCommand(
   return (code) => out().appendLine(`${tag(id)}→ exit ${code}`);
 }
 
+/**
+ * Record text that was produced elsewhere and collected afterwards — today the sandbox's
+ * own startup-hook log (FR-060), which sbx writes inside the VM while nothing on the host
+ * is watching. Not a command runner: it only gives that text the same numbered framing as
+ * the streamed commands, so one channel reads as one story.
+ */
+export function block(title: string, body: string): void {
+  const mark = tag(++seq);
+  out().appendLine(`${mark}# ${title}`);
+  for (const line of body.split(/\r?\n/)) {
+    if (line.trim()) {
+      out().appendLine(`${mark}  ${line}`);
+    }
+  }
+}
+
 export interface RunResult {
   stdout: string;
   stderr: string;

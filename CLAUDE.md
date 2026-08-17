@@ -82,7 +82,10 @@ Secrets are provisioned *on request* via a form driving
 recipe parse/write incl. project `name` — FR-009), `identity.ts` (`.sandbox/identity.yaml`
 `{id}` — local random suffix), `sbx.ts`
 (CLI wrapper: lifecycle + `template load`/`ls`/`rm` + `secret set`/discovery + `hostToSandboxPath`),
-`images.ts` (custom-image build `--pull` → save → `template load` + rebuild image-refresh policy, FR-008/FR-053), `secrets.ts` (provision
+`images.ts` (custom-image build `--pull` → save → `template load` + rebuild image-refresh policy, FR-008/FR-053),
+`kits.ts` (lifecycle hooks FR-060: renders `setup`/`startup`/`services` into the gitignored
+generated kit `.sandbox/kits/<key>/spec.yaml` passed as `sbx create --kit`; owns the kit
+schema and the `SANDBOX_*` variables), `secrets.ts` (provision
 missing secrets via cached-entry picker/prompt, FR-032+FR-051), `blobs.ts` (per-project
 secret cache: DPAPI blobs in `~/.sbx`, shared with the generated CLI — FR-051),
 `script.ts` (generated project CLI `.sandbox/scripts/sbx.sh`, FR-052 — written, never
@@ -102,7 +105,7 @@ FR-057), `terminal.ts`
 types the FR-058 fix without running it), `form.ts` (webview Configure form), `tree.ts` (Sandbox
 Explorer view + per-node commands), `agents.ts`/`services.ts` (registries + discovery).
 Dependency direction: `extension → {ops, form, tree, prereq, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
-`ops → {images, secrets, sandbox, terminal, names, git, sbx, log}`; `git → log`;
+`ops → {images, kits, secrets, sandbox, terminal, names, git, sbx, log}`; `kits → {config, sbx}`; `git → log`;
 `tree → {ops, form, prereq, sandbox, config, identity, agents, sbx, log}`;
 `form → {ops, prereq, secrets, sandbox, config, identity, agents, names, script, sbx}`;
 `secrets → {blobs, sandbox, services, sbx}`; `script → config`; `prereq → {images, sbx}`;

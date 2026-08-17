@@ -71,6 +71,7 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`diagnose -o json`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). Invocations run through `log.ts` (FR-055); the argument vectors stay here. The executable is resolved on **every** call and never memoised (FR-059): where the CLI lives is precisely what changes under a running extension, and any remembered answer — hit or miss — survives an install, a move or an uninstall and forces a window reload. One `existsSync` in front of a `spawn` buys nothing worth that. |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
 | `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). Owns the host-Docker probe `dockerState()` — `docker --version` for *installed*, then `docker info` for *engine reachable*, since the client-only `--version` succeeds while the engine is stopped (FR-059) — and the one sentence both the build failure and the form's notice use. Executable resolved per call, like `sbx.ts`. |
+| `kits.ts` | Lifecycle hooks (FR-060, §7): renders the recipe's `setup`/`startup`/`services` into the generated kit `.sandbox/kits/<key>/spec.yaml` (gitignored artefact), derives the `SANDBOX_*` variables that make a hook mount-agnostic, and turns a rejected kit into the user-facing refusal. Knows the kit schema; the `--kit` argv itself lives in `sbx.ts`. |
 | `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
@@ -88,8 +89,9 @@ Dependency direction (verified against imports):
 `extension → {ops, form, tree, prereq, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
 `tree → {ops, form, prereq, sandbox, config, identity, agents, sbx, log}`;
 `form → {ops, prereq, secrets, sandbox, config, identity, agents, names, script, sbx}`;
-`ops → {images, secrets, sandbox, terminal, names, git, sbx, log}`;
+`ops → {images, kits, secrets, sandbox, terminal, names, git, sbx, log}`;
 `terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
+`kits → {config, sbx}`;
 `sandbox → {config, identity, sbx, log}`; `images → {config, sbx, log}`;
 `prereq → {images, sbx}`; `sbx → log`; `git → log`; `script → config`;
 `identity → config`.
@@ -110,13 +112,14 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 
 | Action | Extension command | sbx invocation |
 |---|---|---|
-| Create + auto-attach (FR-003) | `Connect` (creates if absent; sandboxes are defined via `New Sandbox`) | `sbx create --name <name> [--clone] [-t <image>] <agent> <workspace>`, then `sbx run <name>`. Never the one-shot run create-form: `sbx run <agent> <workspace> --name <name>` matches an existing sandbox by agent+workspace and ignores `--name` (v0.31.3), so any other sandbox on the same workspace makes it fail (spec 012) |
+| Create + auto-attach (FR-003) | `Connect` (creates if absent; sandboxes are defined via `New Sandbox`) | `sbx create --name <name> [--clone] [-t <image>] [--kit <dir>] <agent> <workspace>`, then `sbx run <name>`. Never the one-shot run create-form: `sbx run <agent> <workspace> --name <name>` matches an existing sandbox by agent+workspace and ignores `--name` (v0.31.3), so any other sandbox on the same workspace makes it fail (spec 012) |
 | Attach (FR-005) | `Connect` | `sbx run <name>` (resumes if stopped) |
 | Start (FR-004) | folded into Connect | `sbx run <name>` |
 | Stop (FR-006) | `Stop` | `sbx stop <name>` |
 | Open Shell | `Shell` | `sbx exec -it -w /<drive>/… <name> bash` (auto-starts, lands in workspace) |
 | Discovery (FR-002) | on activation | `sbx ls --json` → match by name |
 | Rebuild/Delete (FR-007) | `Rebuild` (palette + Explorer) / `Delete instance` (Explorer, §12) | `sbx rm --force <name>` (+ image rebuild, §11) |
+| Apply hooks (FR-060) | `Apply Hooks` (Explorer) / offered by the Edit form on Save | `sbx kit add <name> <dir>` — `--kit` is create-only, so this is how an edited hook list reaches an existing sandbox |
 
 The UI labels the attach action **Connect** (the underlying sbx operation is still an
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
@@ -142,7 +145,10 @@ refusal leaves the existing sandbox intact rather than deleting it and then decl
 recreate it. The shallow refusal is a modal dialog raised in `ops.ts` (one place for all
 three surfaces) offering **Open Terminal** — `git fetch --unshallow` typed into a host
 terminal, never executed — and then throws `ops.HandledError`, which every surface's
-error reporter skips so the dialog is not followed by a redundant toast.
+error reporter skips so the dialog is not followed by a redundant toast. The hook kit
+(FR-060, §7) is generated and `sbx kit validate`d in the same band, and for the same
+reason: `--kit` only takes effect at creation, so a kit rejected later would leave a
+sandbox that cannot get its hooks without being recreated.
 
 There is **no implicit default sandbox**, and startup is **always quiet and read-only** —
 opening a workspace never raises notifications and **never writes into `.sandbox/`**
@@ -200,6 +206,12 @@ sandboxes:
     image: myrepo-dev:latest  # optional: image tag to run with (-t)
     dockerfile: Dockerfile    # optional: path under .sandbox/; if set → build `image` from it
     mount: direct             # optional: direct | clone (FS policy; default direct)
+    setup:                    # optional: FR-060 hooks — once, at creation (sh)
+      - npm ci
+    startup:                  # optional: every start, before the agent attaches (bash -lc)
+      - bash $SANDBOX_SOURCE/.sandbox/sync.sh
+    services:                 # optional: every start, in the background
+      - docker compose -f deployment/docker-compose.yml up -d
     secrets: [github]         # optional: service-secret NAMES to provision (values never here)
     ports: [5000, 5173]       # optional: ports to publish
   shell:
@@ -212,7 +224,9 @@ tags it as `image`**, else `image` is used as-is, else (neither) the agent's def
 image. `secrets` holds **names only** — values are provisioned via `sbx secret set` (§8),
 never committed. One repo copy can declare multiple sandboxes (e.g. `claude` + `shell`)
 that share the workspace and (optionally) the same custom image. An empty `sandboxes:`
-map is valid and treated like an absent recipe.
+map is valid and treated like an absent recipe. The three hook lists (FR-060, §7) hold
+shell commands that run **inside** the sandbox, never on the host — they are the recipe's
+only executable content, and their blast radius is the microVM.
 
 Name parts (project name, key) are sanitised to the characters sbx allows (letters,
 digits, `.`, `+`, `-`), must start with a letter/digit, and fall back to `sandbox` when
@@ -275,11 +289,50 @@ so the extension owns this refresh.
 **Never bake secrets** into a template — the docs warn `template save` captures
 manually-added secrets; use `sbx secret set`.
 
-**Kits — declarative extension (planned follow-up, not implemented).** A `spec.yaml`
-(`kind: mixin`/`kind: agent`) supplies env vars, credential→source maps, network rules,
-static files, and commands (`install` runs once at creation and persists; `startup` runs
-on every start and must be idempotent). The shipped extension uses the template path
-only; kit injection (`sbx kit add`) is the natural follow-up for live environment edits.
+**Kits — the lifecycle-hook carrier (FR-060, `kits.ts`).** A kit is a directory with a
+`spec.yaml` (`kind: mixin`) that sbx applies to a sandbox. The extension generates one per
+sandbox that declares hooks, into the gitignored `.sandbox/kits/<key>/`, and passes it as
+`sbx create --kit <dir>`:
+
+```yaml
+schemaVersion: "1"          # required by v0.31.3; its absence is a manifest error
+kind: mixin
+name: <the sbx sandbox name>   # also the dispatcher entry name — see "re-applying" below
+commands:
+  install:                     # once, at creation. `command` is a STRING, run with `sh`
+    - command: npm ci
+      user: "1000"             # the agent user; "0" would be root
+  startup:                     # every container start. `command` is an ARGV ARRAY
+    - command: ["bash", "-lc", "bash $SANDBOX_SOURCE/.sandbox/sync.sh"]
+      user: "1000"
+    - command: ["bash", "-lc", "docker compose up -d"]
+      user: "1000"
+      background: true         # `services:` in the recipe — the restart policy sbx lacks
+environment:
+  variables: { SANDBOX_WORKSPACE: …, SANDBOX_SOURCE: …, SANDBOX_NAME: …, SANDBOX_KEY: … }
+```
+
+The string/array asymmetry is the CLI's, not a choice. Verified end-to-end on v0.31.3
+(spec 017): install output streams through `sbx create`'s stdout (so it lands in the
+progress box and the operation log for free) and a **failing install fails the create**,
+leaving no sandbox behind; startup commands run before `sbx run` attaches the agent, and a
+**failing startup does not fail the start** — the dispatcher stops, the sandbox comes up
+anyway, and the only trace is `/var/log/sbx-kit-startup.log` (`fail <script> exit=<n>`),
+which `ops.ts` reads back and reports. `environment.variables` reach install commands,
+startup commands and the agent's own shell.
+
+**The kit is frozen at creation**, and `--kit` against an existing sandbox is refused
+(*"can only be used when creating a new sandbox"*). Two consequences shape the design:
+hook commands are written as thin pointers to committed scripts, so editing a script needs
+nothing else; and changing the command *list* re-applies the kit with `sbx kit add`, which
+runs the commands once and — because the kit carries the sandbox's own name — **replaces**
+that kit's dispatcher entry rather than stacking a duplicate. Applying to a stopped sandbox
+starts it. Nothing detaches a kit: removing hooks needs a Rebuild.
+
+**Third-party kits are not wired up yet.** `--kit` also accepts ZIP, git and OCI references
+and they stack, which is the natural follow-up for reusable team kits (MCP servers, CA
+certificates); it needs its own preflight, since `kit.allowedSources` defaults to
+`docker.io/` only. Local directories are allowed by default (`kit.allowLocalKits`).
 
 **Instance-first New/Edit (the user edits a sandbox, not a file).** The Explorer drives a
 webview: **New Sandbox** (`sandboxConsole.newSandbox`, the `+` in the view title) creates
@@ -287,9 +340,10 @@ one; **Edit** on a node opens *that* sandbox prefilled. Fields: **Title** (displ
 seeds the key once at creation and never tracks it afterwards, so a rename never touches
 names/images — FR-057, §6),
 **Agent**, **Group** (organises the tree
-into folders), **Credentials** (checkboxes — names only; values prompted on apply), and
+into folders), **Credentials** (checkboxes — names only; values prompted on apply),
 **Advanced** (Environment: Default / Custom Dockerfile / Custom image; published ports as
-add/remove rows; `direct | clone` mount). The Dockerfile choice takes an optional **file
+add/remove rows; `direct | clone` mount) and **Hooks** (three monospace text areas, one
+command per line, each captioned with when it runs and what it can reach — FR-060). The Dockerfile choice takes an optional **file
 name** under `.sandbox/` (empty → `<key>.Dockerfile`): a missing file is generated `FROM`
 the selected agent's base template (`agentTemplate()` — the `-docker` flavor the CLI
 boots by default; claude → `claude-code-docker`); an existing file is reused untouched,
@@ -303,8 +357,10 @@ fallback), so the form tracks the local version.
 
 **Save = persist + apply.** The definition is written to `.sandbox/config.yaml` AND
 applied to the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply
-**live**; image/mount changes prompt a **Rebuild** (recreate; workspace on the mount
-preserved). A just-generated Dockerfile is **not** auto-built (it carries only the agent
+**live**; changed startup hooks offer **Apply Hooks** (`sbx kit add`, above); image/mount
+changes prompt a **Rebuild** (recreate; workspace on the mount preserved). A changed
+`setup` list is not applied to an existing sandbox at all — install is a creation-time
+phase — and the form says so instead of pretending otherwise. A just-generated Dockerfile is **not** auto-built (it carries only the agent
 base, no tooling yet) — the user edits it, then Rebuild/Connect builds it. An edit
 round-trip preserves fields the form does not expose (e.g. `context`), keeps the
 committed secret requirements regardless of what is satisfied on this machine, and a
@@ -373,7 +429,10 @@ Provided by `sbx`, surfaced (not reimplemented) by the extension:
   are logged/allowed/blocked.
 - **Filesystem policy** (Features §12) — *direct* mount (read-write workspace) vs
   `--clone` (private in-container clone, host repo mounted read-only at
-  `/run/sandbox/source`). The clone is made by sbx at every start with
+  `/run/sandbox/source`). That read-only mount is the host **working tree**, git-ignored
+  files included, which is what lets a startup hook (FR-060, §7) copy `.env.local` or
+  generated data into the clone — the clone itself carries only git history. It is the
+  hook's `$SANDBOX_SOURCE`, and it is read-only, so a hook cannot damage the host tree. The clone is made by sbx at every start with
   `git clone --reference <source> <source> <mirrored host path>` plus a `git daemon`
   serving it back as the host remote `sandbox-<name>`; `--reference` is why the mode
   needs a **non-shallow** repository, checked before the create (FR-058, §5, §14).
@@ -482,15 +541,17 @@ instance) → absent → Remove from config:
 
 | State | Inline actions |
 |---|---|
-| running | Stop · Connect · *(Shell in the context menu)* |
-| stopped | Connect · Edit · Delete instance · *(Rebuild in the context menu)* |
+| running | Stop · Connect · *(Shell, Apply Hooks in the context menu)* |
+| stopped | Connect · Edit · Delete instance · *(Rebuild, Apply Hooks in the context menu)* |
 | absent (defined, no instance) | Connect (creates the instance) · Edit · Remove from config |
 | busy (transient — an operation is in flight, FR-054) | none |
 
 Two distinct deletes: **Delete instance** (`sbx rm`, keeps the recipe — recreatable;
 shown when stopped; runs **before** the recipe entry is touched) vs **Remove from
 config** (destroys any live instance first, then drops the entry from `config.yaml`,
-deleting the file if it was the last). A malformed `config.yaml` renders as a single
+deleting the file if it was the last, and removes the sandbox's generated hook kit).
+**Apply Hooks** (FR-060) sits on both existing states because `config.yaml` is a file
+people edit by hand — a hook changed there has no form Save to hang the offer off. A malformed `config.yaml` renders as a single
 error node that opens the file — never as an empty "No sandboxes yet" tree.
 
 **Every slow lifecycle action surfaces a progress notification.** Create, Stop, Delete
@@ -576,6 +637,12 @@ re-encoding these rules as prose and calls subcommands instead
   repository, with the same message and the same fail-open behaviour as `ops.ts`
   (FR-058) — parity here is what keeps a script-driven create from producing the empty
   workspace the UI now prevents.
+- **Same hooks as the UI.** `write_kit` renders the recipe's `setup`/`startup`/`services`
+  into the same gitignored `.sandbox/kits/<key>/spec.yaml` and passes `--kit` on create
+  (FR-060, §7), mirroring `kits.ts`. Commands are emitted as YAML single-quoted scalars
+  (the one escape being a doubled quote), so a command carrying quotes, `#` or `:`
+  survives the round trip. The bash recipe reader handles the **block** sequence form the
+  extension writes, not the inline `[a, b]` form.
 - **Runners.** `runner-create <slug>` instantiates the recipe's `default: true` entry as
   an **ephemeral** clone-mode instance `<name>-<key>-<id>-p<slug>` (agent/image/secret
   names/caps from the recipe; defaults `-m 8g --cpus 4`) — never written back into the
@@ -643,5 +710,18 @@ re-encoding these rules as prose and calls subcommands instead
   the general case would need a post-create probe (`sbx exec … test -d <dest>/.git`), which
   costs a started sandbox per create and reports only after the fact — deliberately not
   built. Recovery for an already-wedged sandbox is **Rebuild** once the cause is removed.
+- **`sbx kit` is EXPERIMENTAL and its schema has already moved** (FR-060, §7). The
+  installed v0.31.3 accepts `commands.install` / `commands.startup`, while
+  docs.docker.com documents a newer `setup.install` / `setup.startup` / `setup.files`
+  shape that v0.31.3 rejects outright. The generator targets the installed CLI and every
+  create validates the kit first (`sbx kit validate`), so a release that renames the
+  schema produces one legible refusal instead of a failure inside `create` — but a kit
+  schema is a moving target, and this is the assumption most likely to need revisiting.
+- **A failing startup hook cannot be prevented, only reported.** sbx keeps the sandbox
+  running and skips the remaining hooks; the extension reads
+  `/var/log/sbx-kit-startup.log` back and warns (FR-060). The read is polled for up to 90s
+  after a start and takes the newest dispatcher block by its own timestamp, so a hook that
+  runs longer than that, or a VM clock far from the host's, degrades to no report rather
+  than to a wrong one. `setup` failures need none of this — they fail the create.
 - **Deferred scope**: filesystem/network policy UIs (Features §12), MCP endpoints
-  (Features §13), kit injection (§7).
+  (Features §13), third-party/reusable kits (`--kit` by OCI/git/ZIP reference, §7).
