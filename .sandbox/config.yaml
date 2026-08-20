@@ -6,31 +6,31 @@ sandboxes:
     title: claude-clone
     group: isolated
     mount: clone
-  # FR-060 demo/acceptance sandbox. Connect it and read dist/lifecycle-hooks.log inside the
-  # sandbox — every line below leaves evidence of a property the feature promises (see the
-  # FR-060 block in .claude/skills/ext-run-local/SKILL.md for what to expect).
+  # FR-060 lifecycle hooks — this repo's own demo, and the fixture the ext-run-local skill
+  # walks. Everything lands in ONE file inside the sandbox: /tmp/hooks.log
   #
-  # Each start mints a run id; the service tags its heartbeats with that id and its own pid,
-  # so a restart is provable: a NEW run id and a NEW pid mean both hooks really re-ran
-  # instead of an old process having survived.
+  #   cat /tmp/hooks.log          (or: tail -f /tmp/hooks.log)
+  #
+  # TEST "edit, restart, applied": change the single line marked EDIT ME from v1 to v2,
+  # save, then Stop → Connect. A new "===== start v2 =====" block appears, with a new
+  # service pid. Nothing else to press — a hook change never needs a Rebuild.
+  # (`setup` is the exception: it runs once while the sandbox is created.)
   #
   # Deliberately one command per line, no YAML block scalars: the generated CLI's recipe
   # reader (.sandbox/scripts/sbx.sh, FR-052) handles plain and quoted scalars only, and this
-  # demo must produce the same sandbox whether it is created from VS Code or from a shell.
-  # dist/ is this repo's gitignored build output, so the evidence never dirties the clone.
+  # demo must produce the same sandbox from VS Code and from a shell. Writing to /tmp keeps
+  # both this repository and the sandbox's private clone clean.
   hooks-demo:
     agent: shell
     title: hooks demo
     group: demo
     mount: clone
     setup:
-      - printf 'event=setup at=%s workspace_exists=%s source_readable=%s\n' "$(date -u +%FT%TZ)" "$(test -d "$SANDBOX_WORKSPACE" && echo yes || echo no)" "$(test -d "$SANDBOX_SOURCE/.git" && echo yes || echo no)" > /tmp/hooks-setup-evidence.txt
+      - printf '%s  setup    once, at create — workspace_exists=%s source_readable=%s\n' "$(date -u +%T)" "$(test -d "$SANDBOX_WORKSPACE" && echo yes || echo no)" "$(test -d "$SANDBOX_SOURCE/.git" && echo yes || echo no)" >> /tmp/hooks.log
     startup:
-      - mkdir -p "$SANDBOX_WORKSPACE/dist"
-      - cat /proc/sys/kernel/random/uuid > "$SANDBOX_WORKSPACE/dist/last-startup-run-id"
-      - printf 'event=startup.begin run=%s at=%s source=%s workspace=%s source_head=%s workspace_head=%s\n' "$(cat "$SANDBOX_WORKSPACE/dist/last-startup-run-id")" "$(date -u +%FT%TZ)" "$SANDBOX_SOURCE" "$SANDBOX_WORKSPACE" "$(git -C "$SANDBOX_SOURCE" rev-parse --short HEAD)" "$(git -C "$SANDBOX_WORKSPACE" rev-parse --short HEAD)" >> "$SANDBOX_WORKSPACE/dist/lifecycle-hooks.log"
-      - cp "$SANDBOX_SOURCE/README.md" "$SANDBOX_WORKSPACE/dist/README.from-source.md"
-      - ls -1A "$SANDBOX_SOURCE" > "$SANDBOX_WORKSPACE/dist/source-top-level.txt"
-      - printf 'event=startup.complete run=%s at=%s copied=README.md source_entries=%s\n' "$(cat "$SANDBOX_WORKSPACE/dist/last-startup-run-id")" "$(date -u +%FT%TZ)" "$(wc -l < "$SANDBOX_WORKSPACE/dist/source-top-level.txt")" >> "$SANDBOX_WORKSPACE/dist/lifecycle-hooks.log"
+      - printf '\n%s  ===== start v1 =====\n' "$(date -u +%T)" >> /tmp/hooks.log   # <<< EDIT ME: v1 → v2
+      - printf '%s  startup  head=%s clone_head=%s\n' "$(date -u +%T)" "$(git -C "$SANDBOX_SOURCE" rev-parse --short HEAD)" "$(git -C "$SANDBOX_WORKSPACE" rev-parse --short HEAD)" >> /tmp/hooks.log
+      - cp "$SANDBOX_SOURCE/README.md" /tmp/README.from-source.md && printf '%s  startup  copied README.md out of the read-only host tree\n' "$(date -u +%T)" >> /tmp/hooks.log
+      - printf '%s  startup  git-ignored host file dist/extension.js — on the host=%s, in the clone=%s\n' "$(date -u +%T)" "$(test -f "$SANDBOX_SOURCE/dist/extension.js" && echo yes || echo no)" "$(test -f "$SANDBOX_WORKSPACE/dist/extension.js" && echo yes || echo no)" >> /tmp/hooks.log
     services:
-      - printf 'event=service.start run=%s at=%s pid=%s\n' "$(cat "$SANDBOX_WORKSPACE/dist/last-startup-run-id")" "$(date -u +%FT%TZ)" "$$" >> "$SANDBOX_WORKSPACE/dist/lifecycle-hooks.log"; while true; do printf 'event=service.heartbeat run=%s at=%s pid=%s\n' "$(cat "$SANDBOX_WORKSPACE/dist/last-startup-run-id")" "$(date -u +%FT%TZ)" "$$" >> "$SANDBOX_WORKSPACE/dist/lifecycle-hooks.log"; sleep 5; done
+      - while true; do printf '%s  service  alive pid=%s\n' "$(date -u +%T)" "$$" >> /tmp/hooks.log; sleep 10; done

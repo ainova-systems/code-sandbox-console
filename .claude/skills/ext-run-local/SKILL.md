@@ -36,24 +36,27 @@ running the extension and checking the FR's behaviour by hand.
 
 This repo's own `.sandbox/config.yaml` carries a `hooks-demo` sandbox (agent `shell`,
 `mount: clone`) whose commands exist to be checked rather than to do work. Connect it, then
-open a Shell and read the evidence:
+open a Shell and read the evidence.
 
-Everything except the first line lands in `$SANDBOX_WORKSPACE/dist/lifecycle-hooks.log`, and
-every start mints a `run=<uuid>` that the service repeats in its heartbeats — that pairing is
-what makes a restart provable rather than plausible.
+Two logs, and only two. **`/tmp/hooks.log`** is what the demo's own commands write — one
+file, chronological, one block per start. **`/tmp/sandbox-console-hooks.log`** is the
+extension's verdict log (`ok` / `fail` per command), truncated at every start, and the file
+the VS Code warning is based on.
 
-| Check | Command in the sandbox | Expected |
+| Check | In the sandbox | Expected |
 |---|---|---|
-| `setup` ran once, **before** the clone existed | `cat /tmp/hooks-setup-evidence.txt` | `workspace_exists=no source_readable=yes` — the create-time phase cannot see the workspace under `mount: clone`; the read-only host tree it can |
-| `startup` ran, and reached files git does not carry | `ls $SANDBOX_WORKSPACE/dist` | `README.from-source.md`, `source-top-level.txt` — copied out of `/run/sandbox/source`, which the clone itself does not contain |
-| the clone matches the host checkout | `grep startup.begin $SANDBOX_WORKSPACE/dist/lifecycle-hooks.log` | `source_head` and `workspace_head` are the same short commit |
-| `services` stays up | `grep -c service.heartbeat $SANDBOX_WORKSPACE/dist/lifecycle-hooks.log` | grows by one every ~5s |
-| **every start replays both hooks** | Stop, then Connect, then `grep -E 'startup.begin\|service.start' …/lifecycle-hooks.log` | a **second** pair with a **new** `run=` and a **new** `pid=` — a surviving process would keep the old ones. `Sandbox: Show Log` also gains a `# startup hooks — <name>` block with `ok` per hook |
-| a failure is not swallowed | add `- exit 7` to `startup`, then **Run Hooks Now** on the node | warning naming the sandbox with **Show Log** / **Open Shell**; the log shows `fail … exit=7`; the sandbox itself stays up (that is sbx's behaviour, not a bug) |
-| a changed list needs a recreate | edit any hook line, Save in the Edit form | a modal asking for a **Rebuild**, explaining that hooks are bound at creation; declining still confirms the save. **Run Hooks Now** runs the new commands once but does **not** change later starts — verified upstream (Architecture §7) |
-| the generated CLI agrees | `bash .sandbox/scripts/sbx.sh connect hooks-demo` from Git Bash on a fresh instance | the same kit and the same evidence — parity is required (CLAUDE.md), and the bash reader supports plain/quoted scalars only, never `- |` block scalars |
+| `setup` ran once, **before** the clone existed | `cat /tmp/hooks.log` (first line) | `setup … workspace_exists=no source_readable=yes` — the create-time phase cannot see the workspace under `mount: clone`; the read-only host tree it can |
+| `startup` reached files git does not carry | same file, `startup` lines | `copied README.md out of the read-only host tree`, and `dist/extension.js=yes (the clone has=no)` — the whole point of `$SANDBOX_SOURCE` |
+| the clone matches the host checkout | same file | `head=` and `clone_head=` are the same short commit |
+| `services` stays up | `tail -3 /tmp/hooks.log` | a `service alive pid=…` line every ~10s |
+| **every start replays both hooks** | Stop, then Connect, then `cat /tmp/hooks.log` | a second `===== start … =====` block with a **new** service pid — a surviving process would keep the old one |
+| **an edit applies on restart** | change the `EDIT ME` line from `v1` to `v2`, Save, Stop → Connect | the new block reads `===== start v2 =====`. No Rebuild and nothing else to press; the form says as much on Save. Start from the Explorer or `sbx.sh connect` — a bare `sbx run` does not regenerate the runner |
+| a failure is not swallowed | set a `startup` line to `exit 7`, Save, Stop → Connect | a warning naming the sandbox with **Show Log** / **Open Shell**; `/tmp/sandbox-console-hooks.log` shows `fail startup[n] exit=7`, the commands after it skipped, the sandbox still running |
+| a dead service is not called started | set a `services` line to `exit 3`, Save, Stop → Connect | `fail service[n] exited immediately` with its output quoted beneath, and `=== hooks end ok, 1 service(s) failed to start` |
+| `setup` is the exception | edit the `setup` line, Save | a modal asking for a **Rebuild**, explaining that the install phase only runs while a sandbox is created; declining still confirms the save |
+| the generated CLI agrees | `bash .sandbox/scripts/sbx.sh connect hooks-demo` from Git Bash on a fresh instance | the same kit, runner and evidence — parity is required (CLAUDE.md), and the bash reader supports plain/quoted scalars only, never `- |` block scalars |
 
-`dist/` is this repo's gitignored build output, so the evidence never dirties the clone.
+Writing to `/tmp` keeps both this repository and the sandbox's private clone clean.
 
 ## Reference points
 

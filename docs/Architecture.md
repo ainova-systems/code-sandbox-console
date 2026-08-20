@@ -71,7 +71,7 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`diagnose -o json`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). Invocations run through `log.ts` (FR-055); the argument vectors stay here. The executable is resolved on **every** call and never memoised (FR-059): where the CLI lives is precisely what changes under a running extension, and any remembered answer — hit or miss — survives an install, a move or an uninstall and forces a window reload. One `existsSync` in front of a `spawn` buys nothing worth that. |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
 | `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). Owns the host-Docker probe `dockerState()` — `docker --version` for *installed*, then `docker info` for *engine reachable*, since the client-only `--version` succeeds while the engine is stopped (FR-059) — and the one sentence both the build failure and the form's notice use. Executable resolved per call, like `sbx.ts`. |
-| `kits.ts` | Lifecycle hooks (FR-060, §7): renders the recipe's `setup`/`startup`/`services` into the generated kit `.sandbox/kits/<key>/spec.yaml` (gitignored artefact), derives the `SANDBOX_*` variables that make a hook mount-agnostic, and turns a rejected kit into the user-facing refusal. Knows the kit schema; the `--kit` argv itself lives in `sbx.ts`. |
+| `kits.ts` | Lifecycle hooks (FR-060, §7): renders the generated kit `.sandbox/kits/<key>/spec.yaml` **and** the runner `startup.sh` it bootstraps (both gitignored artefacts, rewritten before every start — spec 018), derives the `SANDBOX_*` variables that make a hook mount-agnostic, and turns a rejected kit into the user-facing refusal. Knows the kit schema and the runner's semantics; the `--kit` argv itself lives in `sbx.ts`. |
 | `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
@@ -119,7 +119,6 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 | Open Shell | `Shell` | `sbx exec -it -w /<drive>/… <name> bash` (auto-starts, lands in workspace) |
 | Discovery (FR-002) | on activation | `sbx ls --json` → match by name |
 | Rebuild/Delete (FR-007) | `Rebuild` (palette + Explorer) / `Delete instance` (Explorer, §12) | `sbx rm --force <name>` (+ image rebuild, §11) |
-| Run hooks now (FR-060) | `Run Hooks Now` (Explorer) | `sbx kit add <name> <dir>` — runs the recipe's current `startup`/`services` once in an existing sandbox. It does **not** change what later starts run (§7); a changed list needs a Rebuild, which the Edit form asks for |
 
 The UI labels the attach action **Connect** (the underlying sbx operation is still an
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
@@ -322,21 +321,49 @@ anyway, and the only trace is `/var/log/sbx-kit-startup.log` (`fail <script> exi
 which `ops.ts` reads back and reports. `environment.variables` reach install commands,
 startup commands and the agent's own shell.
 
-**The kit is frozen at creation.** `--kit` against an existing sandbox is refused (*"can
-only be used when creating a new sandbox"*), and `sbx kit add` does **not** substitute for
-it: verified on v0.31.3 by creating a sandbox whose startup command printed `VERSION-A`,
-re-adding the same-named kit carrying `VERSION-B`, and restarting — `B` ran once, then `A`
-ran again, and `/etc/durable-startup.d/002-startup-<kit>/000-cmd.sh` still held `A`. So
-`kit add` applies a kit to the *running container* (files, init files, startup commands) and
-records metadata; the durable entry written at creation stays as it was.
+**The kit is frozen at creation — so it carries a bootstrap, not the commands** (spec 018).
+`--kit` against an existing sandbox is refused (*"can only be used when creating a new
+sandbox"*), and `sbx kit add` does not substitute for it: verified on v0.31.3 by creating a
+sandbox whose startup command printed `VERSION-A`, re-adding the same-named kit carrying
+`VERSION-B`, and restarting — `B` ran once, then `A` ran again, and
+`/etc/durable-startup.d/002-startup-<kit>/000-cmd.sh` still held `A`.
 
-Two consequences shape the design. Hook commands are written as thin **pointers to committed
-scripts**, so the work a hook does changes with the script, with nothing to re-apply — that
-is what keeps the frozen list from mattering most of the time. And changing the *list*
-itself is a **Rebuild**, which the Edit form asks for alongside image/mount changes.
-`Run Hooks Now` is the separate, non-destructive action built on `kit add`: run the current
-commands once in an existing sandbox (a stopped one is started to do it), announced as
-exactly that. Nothing detaches a kit, so removing hooks also needs a Rebuild.
+What is frozen is therefore only the command *text*, and the single startup entry the kit
+carries is:
+
+```bash
+if [ -f "$SANDBOX_SOURCE"/.sandbox/kits/<key>/startup.sh ]; then
+  bash "$SANDBOX_SOURCE"/.sandbox/kits/<key>/startup.sh
+else
+  echo "Sandbox Console: … is missing …" >&2; exit 1      # loud, never a silent no-op
+fi
+```
+
+`kits.ts` writes that **runner script** next to the kit from the recipe's `startup` +
+`services`, and rewrites it on **every** start path (Connect, Shell, Rebuild — and the
+generated CLI's connect). Under `mount: clone` it is read from `/run/sandbox/source`, the
+read-only host tree, which is the only copy guaranteed current. So the rule the user gets is
+one sentence: *edit, restart, applied*. `setup` stays baked in as `commands.install` —
+re-running the install phase is what a Rebuild is, and the form says so.
+
+The runner reproduces the dispatcher semantics users were told about: commands in order, a
+failure stops the rest and is recorded with its exit code, services detached (and a service
+that is gone a second later is recorded as `fail … exited immediately`, never as *started*).
+It writes `/tmp/sandbox-console-hooks.log`, **truncated at the top of every run**, which is
+what lets `ops.reportStartupHooks` read it without dating anything; sbx's own dispatcher log
+stays as the fallback that catches a bootstrap failure.
+
+Two consequences of the bootstrap being frozen, both handled rather than documented away:
+
+- **Removing hooks must remove them.** An emptied recipe still faces a bootstrap that runs
+  the runner, so `ensureKit` rewrites an existing runner as a no-op instead of leaving
+  yesterday's commands on disk (deleting it would make every start fail *missing*).
+- **A sandbox created with no hooks at all has no bootstrap**, and one cannot be attached
+  afterwards. The bootstrap is therefore emitted whenever a sandbox gets a kit — including a
+  setup-only recipe, whose runner is a no-op today — and for the remaining case (hooks added
+  to a sandbox created without any) `ops.reportStartupHooks` notices that the runner's log
+  never appeared and offers a one-time **Rebuild**, instead of leaving the user waiting for
+  hooks that cannot run.
 
 **Third-party kits are not wired up yet.** `--kit` also accepts ZIP, git and OCI references
 and they stack, which is the natural follow-up for reusable team kits (MCP servers, CA
@@ -366,11 +393,12 @@ fallback), so the form tracks the local version.
 
 **Save = persist + apply.** The definition is written to `.sandbox/config.yaml` AND
 applied to the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply
-**live**; image, mount **and hook** changes prompt a **Rebuild** (recreate; workspace on the
-mount preserved), because all three are bound when the sandbox is created. The prompt names
-which of them changed, and a hook change carries the reason — a text edit that costs a
-recreate needs one, with `Run Hooks Now` named as the non-destructive alternative.
-Declining the rebuild still confirms the save: the recipe on disk changed either way. A just-generated Dockerfile is **not** auto-built (it carries only the agent
+**live**; a changed `startup`/`services` list applies on the **next start** and the form says
+so; image, mount and a changed **`setup`** list prompt a **Rebuild** (recreate; workspace on
+the mount preserved), since those three are bound when the sandbox is created. The prompt
+names which of them changed and, for `setup`, why the install phase is unlike the other two
+hook lists. Declining the rebuild still confirms the save: the recipe on disk changed either
+way. A just-generated Dockerfile is **not** auto-built (it carries only the agent
 base, no tooling yet) — the user edits it, then Rebuild/Connect builds it. An edit
 round-trip preserves fields the form does not expose (e.g. `context`), keeps the
 committed secret requirements regardless of what is satisfied on this machine, and a
@@ -551,8 +579,8 @@ instance) → absent → Remove from config:
 
 | State | Inline actions |
 |---|---|
-| running | Stop · Connect · *(Shell, Run Hooks Now in the context menu)* |
-| stopped | Connect · Edit · Delete instance · *(Rebuild, Run Hooks Now in the context menu)* |
+| running | Stop · Connect · *(Shell in the context menu)* |
+| stopped | Connect · Edit · Delete instance · *(Rebuild in the context menu)* |
 | absent (defined, no instance) | Connect (creates the instance) · Edit · Remove from config |
 | busy (transient — an operation is in flight, FR-054) | none |
 
@@ -560,11 +588,10 @@ Two distinct deletes: **Delete instance** (`sbx rm`, keeps the recipe — recrea
 shown when stopped; runs **before** the recipe entry is touched) vs **Remove from
 config** (destroys any live instance first, then drops the entry from `config.yaml`,
 deleting the file if it was the last, and removes the sandbox's generated hook kit).
-**Run Hooks Now** (FR-060) sits on both existing states: it runs the recipe's current
-`startup`/`services` once, which is as useful after a host-side `git pull` as after an edit,
-and `config.yaml` is a file people edit by hand with no form Save to hang it off. A
-malformed `config.yaml` renders as a single error node that opens the file — never as an
-empty "No sandboxes yet" tree.
+There is deliberately **no per-node hook action** (FR-060, spec 018): a start already applies
+the current hooks, so Stop → Connect is the whole story and a second surface would only be a
+way to get the two out of step. A malformed `config.yaml` renders as a single error node that
+opens the file — never as an empty "No sandboxes yet" tree.
 
 **Every slow lifecycle action surfaces a progress notification.** Create, Stop, Delete
 instance, and Recreate each run their `sbx` call (and the preceding terminal disposal,
@@ -649,17 +676,19 @@ re-encoding these rules as prose and calls subcommands instead
   repository, with the same message and the same fail-open behaviour as `ops.ts`
   (FR-058) — parity here is what keeps a script-driven create from producing the empty
   workspace the UI now prevents.
-- **Same hooks as the UI.** `write_kit` renders the recipe's `setup`/`startup`/`services`
-  into the same gitignored `.sandbox/kits/<key>/spec.yaml`, runs the same
-  `sbx kit validate` preflight, and passes `--kit` on create (FR-060, §7) — on
-  `runner-create` too, under the runner's own name and its own kit directory, since a
-  runner is a separate clone-mode sandbox and the kit name is what sbx keys its dispatcher
-  entry by. Reading commands back out of the recipe **decodes** YAML scalars (single-quoted
-  `''`, double-quoted backslash escapes) rather than stripping the outer quotes: a command
-  such as `echo "it's: #ok"` is stored quoted-and-escaped, and stripping alone would hand
-  sbx a different command than the extension does. Re-emitted as single-quoted scalars.
-  The bash reader handles the **block** sequence form the extension writes, not the inline
-  `[a, b]` form or block/folded scalars.
+- **Same hooks as the UI.** `write_kit` renders the same gitignored
+  `.sandbox/kits/<key>/spec.yaml` **and `startup.sh`**, runs the same `sbx kit validate`
+  preflight, and passes `--kit` on create (FR-060, §7) — on `runner-create` too, under the
+  runner's own name and kit directory, since a runner is a separate clone-mode sandbox and
+  the kit name is what sbx keys its dispatcher entry by. `connect` on an existing sandbox
+  rewrites the runner before `sbx run`, mirroring the extension, so "edit, restart, applied"
+  holds from a shell as well (spec 018). Reading commands back out of the recipe **decodes**
+  YAML scalars the way a parser does — single-quoted `''`, double-quoted backslash escapes,
+  and a trailing ` #comment` dropped from a **plain** scalar but kept inside a quoted one, so
+  `echo "it's: #ok"` survives while `npm ci   # note to self` does not smuggle the note into
+  the command. Stripping the outer quotes alone would hand sbx a different command than the
+  extension does. The bash reader handles the **block** sequence form the extension writes,
+  not the inline `[a, b]` form or block/folded scalars.
 - **Runners.** `runner-create <slug>` instantiates the recipe's `default: true` entry as
   an **ephemeral** clone-mode instance `<name>-<key>-<id>-p<slug>` (agent/image/secret
   names/caps from the recipe; defaults `-m 8g --cpus 4`) — never written back into the
@@ -735,14 +764,17 @@ re-encoding these rules as prose and calls subcommands instead
   schema produces one legible refusal instead of a failure inside `create` — but a kit
   schema is a moving target, and this is the assumption most likely to need revisiting.
 - **A failing startup hook cannot be prevented, only reported.** sbx keeps the sandbox
-  running and skips the remaining hooks; the extension reads
-  `/var/log/sbx-kit-startup.log` back and warns (FR-060). The file accumulates one block
-  per start and cannot be read before the start (the read itself would start a stopped
-  sandbox), so a block is credited to this start only when it is stamped at or after the
-  start, **or** when it differs from the block that was already there. A hook still running
-  after 90s, or a VM clock behind the host's on a first-read-is-new race, therefore
-  degrades to **no report** rather than to a wrong one. `setup` failures need none of this
-  — they fail the create itself.
+  running; the runner stops at the failure and records it, and the extension reads
+  `/tmp/sandbox-console-hooks.log` back and warns (FR-060). The runner truncates that file
+  at the top of every run, so anything in it belongs to the current start. A hook still
+  running after 90s degrades to **no report** rather than a wrong one, and a bootstrap that
+  never reached the runner (a missing `startup.sh`) is caught by the fallback read of sbx's
+  own dispatcher log, credited to this start only when its timestamp says so. `setup`
+  failures need none of this — they fail the create itself.
+- **Hooks apply on restart, which means an unstarted sandbox is not up to date.** The runner
+  is rewritten on every start path, so a recipe edited while a sandbox is running takes
+  effect at its next start and not before — deliberate (§7), and the reason there is no
+  "apply now" action to get the two out of step.
 - **A create-time hook can only use a globally-scoped credential.** `sbx secret set` scopes
   either globally or to an existing sandbox, and hooks run inside the create, so the
   per-sandbox scope cannot exist yet (FR-060 × FR-032). The extension offers the global

@@ -71,14 +71,56 @@ function hookVariables(
   };
 }
 
+/** Where the runner script records what it did; read back by ops.ts (FR-060). */
+export const HOOKS_LOG = "/tmp/sandbox-console-hooks.log";
+
+/** The generated runner, relative to the repository root. */
+function runnerPath(key: string): string {
+  return `.sandbox/${KITS_DIR}/${key}/startup.sh`;
+}
+
+/** Quote a value for single-quoted bash: the only escape inside one is `'\''`. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The one startup command the kit carries (spec 018). sbx binds a startup command when the
+ * sandbox is created and replays it verbatim forever, so what it must contain is not the
+ * user's commands — those would be frozen with it — but a **bootstrap** that runs the
+ * generated script. The script is rewritten from the recipe before every start, which is
+ * what makes "edit, restart, applied" true.
+ *
+ * It is read from `$SANDBOX_SOURCE`, the host working tree: under `mount: clone` that is the
+ * read-only mount, the only copy guaranteed to be current (the clone is a snapshot of git
+ * history and the kit directory is gitignored anyway).
+ *
+ * A missing script is a **loud** failure rather than a silent hookless start: the directory
+ * is a generated artefact, so a fresh clone legitimately lacks it, and the fix is one action.
+ */
+function bootstrapCommand(key: string): string[] {
+  // The key is interpolated into a shell command that runs inside the sandbox, so hold it to
+  // the same containment rule as the directory it names (`kitDirUri`, below). ensureKit
+  // already checks it there; this keeps the guarantee if `renderKit` is called on its own.
+  assertKey(key);
+  const script = `"$SANDBOX_SOURCE"/${runnerPath(key)}`;
+  return [
+    "bash",
+    "-lc",
+    `if [ -f ${script} ]; then bash ${script}; else ` +
+      `echo "Sandbox Console: ${runnerPath(key)} is missing, so this sandbox started ` +
+      `without its lifecycle hooks. Connect it from VS Code (or run .sandbox/scripts/sbx.sh ` +
+      `connect ${key}) to regenerate the file, then restart." >&2; exit 1; fi`,
+  ];
+}
+
 /**
  * Render the kit document. Pure, so the shape is reviewable in one place.
  *
  * `install` takes its command as a plain string (sbx runs it with `sh -c`), `startup` as an
- * argv array — an asymmetry of the CLI's schema, not a choice here. Startup commands go
- * through `bash -lc` so they get a login shell, matching what the user gets in a sandbox
- * terminal; setup commands are `sh` and this is stated in Features.md, since it is the one
- * place the two phases differ for whoever writes the command.
+ * argv array — an asymmetry of the CLI's schema, not a choice here. `setup` commands are
+ * still baked in literally: install is a creation-time phase, so freezing them changes
+ * nothing (a changed `setup` list is what Rebuild is for).
  */
 export function renderKit(opts: {
   spec: SandboxSpec;
@@ -91,26 +133,20 @@ export function renderKit(opts: {
     user: AGENT_UID,
     description: `setup[${i + 1}] — ${spec.key}`,
   }));
-  const startup = [
-    ...spec.startup.map((command, i) => ({
-      command: ["bash", "-lc", command],
-      user: AGENT_UID,
-      description: `startup[${i + 1}] — ${spec.key}`,
-    })),
-    ...spec.services.map((command, i) => ({
-      command: ["bash", "-lc", command],
-      user: AGENT_UID,
-      background: true,
-      description: `service[${i + 1}] — ${spec.key}`,
-    })),
-  ];
   const commands: Record<string, unknown> = {};
   if (install.length > 0) {
     commands.install = install;
   }
-  if (startup.length > 0) {
-    commands.startup = startup;
-  }
+  // The bootstrap goes in whenever the sandbox gets a kit at all — even for a setup-only
+  // recipe, whose runner is a no-op today. It is what a later `startup:` entry needs in
+  // order to apply on a restart, and it cannot be added afterwards (`--kit` is create-only).
+  commands.startup = [
+    {
+      command: bootstrapCommand(spec.key),
+      user: AGENT_UID,
+      description: `lifecycle hooks — ${spec.key}`,
+    },
+  ];
   return stringify(
     {
       schemaVersion: "1",
@@ -138,13 +174,89 @@ export function renderKit(opts: {
  */
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-function kitDirUri(root: vscode.Uri, key: string): vscode.Uri {
+function assertKey(key: string): string {
   if (!KEY_RE.test(key)) {
     throw new Error(
       `.sandbox/config.yaml: "${key}" cannot name a sandbox — use only letters, digits and "._-", starting with a letter or digit (no path separators).`
     );
   }
-  return vscode.Uri.joinPath(root, CONFIG_DIR, KITS_DIR, key);
+  return key;
+}
+
+/**
+ * The generated runner script: the recipe's `startup` and `services` as bash, rewritten
+ * before every start (spec 018) — this file, not the kit, is what a restart picks up.
+ *
+ * It reproduces the semantics sbx's own dispatcher has, because users were told those:
+ * commands run in order, a failure **stops the rest** and is recorded with its exit code,
+ * and services are left running in the background. The log is truncated at the top of every
+ * run, so whatever is in it always describes the current start and nothing older — which is
+ * also what lets `ops.reportStartupHooks` read it without dating anything.
+ */
+export function renderRunner(spec: SandboxSpec): string {
+  const lines = [
+    "#!/usr/bin/env bash",
+    `# Generated by Sandbox Console for "${spec.key}" (FR-060, spec 018).`,
+    "# Rewritten from .sandbox/config.yaml before every start — edits here are lost.",
+    "",
+    `LOG=${HOOKS_LOG}`,
+    ': > "$LOG"',
+    "say() { printf '%s\\n' \"$*\" >> \"$LOG\"; }",
+    "",
+    "run() { # <label> <command> — a failure stops the run, like sbx's own dispatcher",
+    '  if bash -lc "$2" >> "$LOG" 2>&1; then',
+    '    say "ok $1"',
+    "  else",
+    "    code=$?",
+    '    say "fail $1 exit=$code"',
+    '    say "=== hooks end failed"',
+    '    exit "$code"',
+    "  fi",
+    "}",
+    "",
+    "service() { # <label> <command> <output file> — detached, survives this script",
+    "  if command -v setsid >/dev/null 2>&1; then",
+    '    setsid bash -lc "$2" > "$3" 2>&1 < /dev/null &',
+    "  else",
+    '    nohup bash -lc "$2" > "$3" 2>&1 < /dev/null &',
+    "  fi",
+    "  pid=$!",
+    "  # A service that dies on the spot must not be reported as running: give it a moment,",
+    "  # then say so with the output that explains why. It does not stop the remaining hooks.",
+    "  sleep 1",
+    '  if kill -0 "$pid" 2>/dev/null; then',
+    '    say "started $1 pid=$pid (output: $3)"',
+    "  else",
+    '    say "fail $1 exited immediately"',
+    '    sed "s/^/    | /" "$3" >> "$LOG" 2>/dev/null',
+    "    dead=$((dead + 1))",
+    "  fi",
+    "}",
+    "dead=0",
+    "",
+    `say "=== hooks begin ${spec.key}"`,
+  ];
+  spec.startup.forEach((command, i) =>
+    lines.push(`run 'startup[${i + 1}]' ${shellQuote(command)}`)
+  );
+  spec.services.forEach((command, i) =>
+    lines.push(
+      `service 'service[${i + 1}]' ${shellQuote(command)} '/tmp/sandbox-console-service-${
+        i + 1
+      }.log'`
+    )
+  );
+  // The end marker is what tells `ops.reportStartupHooks` the run is over; it must not read
+  // as a clean bill of health when a service died on the spot.
+  lines.push(
+    'if [ "$dead" -gt 0 ]; then say "=== hooks end ok, $dead service(s) failed to start"; else say "=== hooks end ok"; fi',
+    ""
+  );
+  return lines.join("\n");
+}
+
+function kitDirUri(root: vscode.Uri, key: string): vscode.Uri {
+  return vscode.Uri.joinPath(root, CONFIG_DIR, KITS_DIR, assertKey(key));
 }
 
 /**
@@ -171,25 +283,49 @@ async function ensureIgnored(root: vscode.Uri): Promise<void> {
 }
 
 /**
- * Write the sandbox's kit and return the directory to pass to `sbx create --kit`, or
- * undefined when the sandbox declares no hooks (then nothing is written and no `--kit` is
- * passed — a hookless sandbox behaves exactly as it did before FR-060).
+ * Write the sandbox's kit **and its runner script**, returning the directory to pass to
+ * `sbx create --kit`, or undefined when the sandbox declares no hooks (then nothing is
+ * written and no `--kit` is passed — a hookless sandbox behaves as it did before FR-060).
  *
- * The kit is named after the sbx sandbox, which is what makes re-applying it replace its
- * dispatcher entry instead of stacking a second copy (`sbx kit add`, verified on v0.31.3).
+ * Called before **every** start, not only at creation: the kit is frozen into the sandbox,
+ * but the runner it bootstraps is read fresh from the host tree on each start, so rewriting
+ * it here is what makes an edited recipe take effect on the next start (spec 018).
+ *
+ * Note the LF line endings: the script is written on Windows and executed by bash inside a
+ * Linux VM, where a CR would end up in the command.
  */
 export async function ensureKit(
   root: vscode.Uri,
   opts: { spec: SandboxSpec; sandboxName: string; workspaceInside: string }
 ): Promise<string | undefined> {
+  const dir = kitDirUri(root, opts.spec.key);
+  const runner = vscode.Uri.joinPath(dir, "startup.sh");
   if (!hasHooks(opts.spec)) {
+    // Nothing to attach — but a sandbox created earlier still carries a bootstrap that runs
+    // this file, so leaving yesterday's runner in place would keep yesterday's hooks running
+    // forever. Removing hooks from the recipe has to actually remove them, so the runner is
+    // rewritten as a no-op instead (deleting it would make every start fail "missing").
+    try {
+      await vscode.workspace.fs.stat(runner);
+      await vscode.workspace.fs.writeFile(
+        runner,
+        Buffer.from(renderRunner({ ...opts.spec, startup: [], services: [] }), "utf8")
+      );
+    } catch {
+      // no runner was ever generated for this sandbox — nothing to neutralise
+    }
     return undefined;
   }
-  const dir = kitDirUri(root, opts.spec.key);
   await vscode.workspace.fs.createDirectory(dir);
   await vscode.workspace.fs.writeFile(
     vscode.Uri.joinPath(dir, "spec.yaml"),
     Buffer.from(renderKit(opts), "utf8")
+  );
+  // Written unconditionally, including for a setup-only recipe: the bootstrap (if this
+  // sandbox has one) calls it on every start, so it must always describe the CURRENT recipe.
+  await vscode.workspace.fs.writeFile(
+    runner,
+    Buffer.from(renderRunner(opts.spec), "utf8")
   );
   await ensureIgnored(root);
   return dir.fsPath;

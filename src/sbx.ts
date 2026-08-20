@@ -232,9 +232,9 @@ export async function create(
     args.push("-t", assertImageTag(opts.image));
   }
   if (opts.kit) {
-    // FR-060: hooks can only be attached at creation — `--kit` against an existing sandbox
-    // is refused by the CLI ("can only be used when creating a new sandbox"), which is why
-    // changing them later goes through `kitAdd`.
+    // FR-060: a kit can only be attached at creation — `--kit` against an existing sandbox
+    // is refused by the CLI ("can only be used when creating a new sandbox"). That is why
+    // the kit carries a bootstrap rather than the commands themselves (kits.ts, spec 018).
     args.push("--kit", assertPathArg(opts.kit, "kit directory"));
   }
   args.push(assertAgentId(opts.agent), opts.workspace);
@@ -476,27 +476,28 @@ export async function kitValidate(
 }
 
 /**
- * Apply a kit to a sandbox that already exists (FR-060) — it runs the kit's startup
- * commands against the running container **once**.
+ * Read a file out of a **running** sandbox (FR-060: the hook runner's own log). Returns
+ * undefined when it does not exist or cannot be read.
  *
- * It is not a substitute for `--kit` (which is create-only). Verified on v0.31.3: a sandbox
- * created with startup command `A` and re-added with `B` runs `B` once and then `A` on every
- * later start — the durable dispatcher entry from creation is left untouched, which is also
- * why repeated applies cannot stack duplicates. Callers must not describe this as changing
- * what the sandbox does at start-up; `ops.runHooksNow` says so in its completion message.
+ * Callers must check the sandbox is running first: `sbx exec` would otherwise START a
+ * stopped sandbox just to read a file — which would run its hooks as a side effect of
+ * reporting on them.
  */
-export async function kitAdd(
+export async function readFile(
   name: string,
-  dir: string,
-  ctx?: log.OpContext
-): Promise<void> {
-  const { stderr, code } = await run(
-    ["kit", "add", assertSandboxName(name), assertPathArg(dir, "kit directory")],
-    ctx
-  );
-  if (code !== 0) {
-    throw new Error(stderr.trim() || `sbx kit add failed for ${name}`);
+  path: string
+): Promise<string | undefined> {
+  if (!/^\/[A-Za-z0-9._\-/]*$/.test(path)) {
+    throw new Error(`invalid sandbox path "${path}"`); // interpolated into `bash -lc`
   }
+  const { stdout, code } = await probe([
+    "exec",
+    assertSandboxName(name),
+    "bash",
+    "-lc",
+    `cat ${path}`,
+  ]);
+  return code === 0 ? stdout : undefined;
 }
 
 /** Where sbx's startup dispatcher records every run (the path the CLI itself prints). */

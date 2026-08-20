@@ -287,14 +287,18 @@ async function assertMountUsable(
 async function prepareHooks(
   root: vscode.Uri,
   ref: sandbox.SandboxRef,
-  workspace: string
+  workspace: string,
+  creating = false
 ): Promise<string | undefined> {
   const dir = await kits.ensureKit(root, {
     spec: ref.spec,
     sandboxName: ref.name,
     workspaceInside: sbx.hostToSandboxPath(workspace),
   });
-  if (dir) {
+  // Only a create consumes the kit spec (`--kit`) or can be blocked usefully by it: for a
+  // sandbox that already exists the runner script above is the whole payload, and refusing
+  // to attach over a kit nothing is about to read would be gratuitous.
+  if (dir && creating) {
     await kits.assertValid(dir);
     if (ref.spec.secrets.length > 0) {
       // FR-060 × FR-032: the hooks are about to run inside `sbx create`, before the point
@@ -311,6 +315,36 @@ async function prepareHooks(
 
 /** How long to wait for the startup dispatcher to finish before giving up on reporting. */
 const STARTUP_REPORT_MS = 90_000;
+/** After this long with no hook log at all, the sandbox has no bootstrap (see below). */
+const NO_BOOTSTRAP_MS = 20_000;
+
+/**
+ * FR-060: the sandbox is running its hooks-free past. A kit can only be attached at
+ * creation, so a sandbox created before its recipe declared any hook has no bootstrap and
+ * cannot gain one by restarting — the one exception to "edit, restart, applied", and the
+ * only case where a Rebuild is the answer for a `startup` change.
+ */
+async function reportMissingBootstrap(
+  root: vscode.Uri,
+  ref: sandbox.SandboxRef
+): Promise<void> {
+  log.block(
+    `startup hooks — ${ref.name}`,
+    "This sandbox was created before it declared any lifecycle hook, so it carries no hook " +
+      "bootstrap. sbx can only attach one while a sandbox is created (`--kit` is " +
+      "create-only), which is why a Rebuild is needed here."
+  );
+  const choice = await vscode.window.showWarningMessage(
+    `${ref.name} was created without lifecycle hooks, so the ones in the recipe did not run. Rebuild it once to attach them — after that, edits apply on a restart.`,
+    "Rebuild",
+    "Show Log"
+  );
+  if (choice === "Rebuild") {
+    await rebuildRef(root, ref);
+  } else if (choice === "Show Log") {
+    log.show();
+  }
+}
 
 /**
  * FR-060: say what the startup hooks did. Call with `void` after a start.
@@ -339,11 +373,16 @@ export async function reportStartupHooks(
     return;
   }
   const deadline = Date.now() + STARTUP_REPORT_MS;
-  let run: sbx.StartupRun | undefined;
-  // The block already in the file, identified by its header stamp (or its text when the
-  // header cannot be parsed). Set from the first read that turns out to be stale.
-  let stale: string | undefined;
-  while (Date.now() < deadline && !run) {
+  let text: string | undefined;
+  let failed = false;
+  // Whether the runner's log ever appeared. It is truncated as the runner's very first act,
+  // so a running sandbox that still has no log after a few polls does not have a bootstrap —
+  // it was created before these hooks were declared, and a kit cannot be attached to an
+  // existing sandbox. That is the one case where "edit, restart, applied" does not hold, and
+  // it is worth saying out loud rather than leaving the user waiting for hooks that will
+  // never run.
+  let sawLog = false;
+  while (Date.now() < deadline && !text) {
     let running = false;
     try {
       running = (await sbx.stateOf(ref.name)) === "running";
@@ -351,30 +390,42 @@ export async function reportStartupHooks(
       // transient CLI error — try again
     }
     if (running) {
-      // `startupRun` uses `sbx exec`, which would START a stopped sandbox; the state check
-      // above is what keeps this read-only.
-      const latest = await sbx.startupRun(ref.name).catch(() => undefined);
-      if (latest) {
-        const id = latest.at !== undefined ? String(latest.at) : latest.text;
-        const isThisStart =
-          (latest.at !== undefined && latest.at >= startedAt) ||
-          (stale !== undefined && id !== stale);
-        if (isThisStart && (latest.complete || latest.failures.length > 0)) {
-          run = latest;
-          break;
+      // `readFile` uses `sbx exec`, which would START a stopped sandbox — and starting it
+      // would run the very hooks this is reporting on. The state check above is what keeps
+      // the report read-only.
+      const hooks = await sbx
+        .readFile(ref.name, kits.HOOKS_LOG)
+        .catch(() => undefined);
+      // The runner truncates its log at the top of every run, so whatever is in it belongs
+      // to this start and nothing older — no dating, no baselines (spec 018).
+      if (hooks !== undefined) {
+        sawLog = true;
+        if (/^=== hooks end/m.test(hooks)) {
+          text = hooks.trim();
+          failed = /^fail /m.test(hooks);
         }
-        if (!isThisStart) {
-          stale ??= id;
-        }
+      } else if (Date.now() - startedAt > NO_BOOTSTRAP_MS) {
+        await reportMissingBootstrap(root, ref);
+        return;
       }
     }
-    await sleep(1500);
+    if (!text) {
+      await sleep(1500);
+    }
   }
-  if (!run) {
-    return; // still running after the deadline, or nothing this start can be credited with
+  if (!text) {
+    // The runner never finished. With a log present it is still working (or was killed
+    // mid-run); with none at all the bootstrap failed before it — a missing runner script —
+    // which only sbx's own dispatcher log records.
+    const boot = sawLog ? undefined : await bootstrapFailure(ref, startedAt);
+    if (!boot) {
+      return; // still running after the deadline, or nothing to report
+    }
+    text = boot;
+    failed = true;
   }
-  log.block(`startup hooks — ${ref.name}`, run.text);
-  if (run.failures.length === 0) {
+  log.block(`startup hooks — ${ref.name}`, text);
+  if (!failed) {
     return;
   }
   const choice = await vscode.window.showWarningMessage(
@@ -388,6 +439,37 @@ export async function reportStartupHooks(
   } else if (choice === "Open Shell") {
     void shellRef(root, ref);
   }
+}
+
+/**
+ * The fallback path: sbx's dispatcher log, consulted only when the hook runner produced
+ * nothing. Reports **failures only** — a dispatcher block that merely says the bootstrap
+ * succeeded adds nothing the runner's own log would not have said better.
+ *
+ * The file accumulates one block per start and cannot be read before the start, so a block
+ * counts as this start's only when its own timestamp says so. Anything older — or a header
+ * this cannot date — reports nothing: silence beats crediting a previous start's failure to
+ * the run the user is watching, and the runner's log (which is truncated per run) is the
+ * path that carries the detail anyway.
+ */
+async function bootstrapFailure(
+  ref: sandbox.SandboxRef,
+  startedAt: number
+): Promise<string | undefined> {
+  let running = false;
+  try {
+    running = (await sbx.stateOf(ref.name)) === "running";
+  } catch {
+    return undefined;
+  }
+  if (!running) {
+    return undefined;
+  }
+  const latest = await sbx.startupRun(ref.name).catch(() => undefined);
+  if (!latest || latest.failures.length === 0) {
+    return undefined;
+  }
+  return latest.at !== undefined && latest.at >= startedAt ? latest.text : undefined;
 }
 
 /**
@@ -497,14 +579,17 @@ export async function createOrAttach(
   await exclusive(ref.name, "Connect", async () => {
     const before = await sandbox.state(ref);
     const startedAt = Date.now();
+    const workspace = sandbox.workspacePath();
+    if (!workspace) {
+      throw new Error("No workspace open.");
+    }
+    // FR-060/spec 018: refresh the hook runner on EVERY connect, not only on the create.
+    // A start replays the recipe as it is now, so this is what makes "edit, restart,
+    // applied" true — including for a recipe changed by a git pull in another window.
+    const kit = await prepareHooks(root, ref, workspace, before === "absent");
     if (before === "absent") {
-      const workspace = sandbox.workspacePath();
-      if (!workspace) {
-        throw new Error("No workspace open.");
-      }
       sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
-      const kit = await prepareHooks(root, ref, workspace); // FR-060
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace, kit);
       if (ref.spec.secrets.length > 0) {
@@ -585,7 +670,7 @@ export async function rebuildRef(
       }
       sbx.hostToSandboxPath(workspace); // fail fast on UNC/WSL paths, before any sbx mutation
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
-      const kit = await prepareHooks(root, ref, workspace); // FR-060, before the removal
+      const kit = await prepareHooks(root, ref, workspace, true); // FR-060, before removal
       if (ref.spec.image && ref.spec.dockerfile) {
         await ensureImageForRef(ref, root.fsPath, true); // docker build --pull (FR-053)
       }
@@ -655,9 +740,11 @@ export async function shellRef(
     const workspaceInside = sbx.hostToSandboxPath(workspace);
     const before = await sandbox.state(ref);
     const startedAt = Date.now();
+    // Same as Connect: the runner is refreshed on every start path, since `sbx exec` starts
+    // a stopped sandbox and that start replays the hooks (spec 018).
+    const kit = await prepareHooks(root, ref, workspace, before === "absent");
     if (before === "absent") {
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
-      const kit = await prepareHooks(root, ref, workspace); // FR-060
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace, kit);
     }
@@ -680,61 +767,4 @@ export async function shellRef(
  */
 export function removeHooks(root: vscode.Uri, key: string): Promise<void> {
   return kits.removeKit(root, key);
-}
-
-/**
- * FR-060: run this sandbox's current `startup`/`services` commands **now**, in a sandbox
- * that already exists — the way to bring a running workspace up to date without a Rebuild
- * and without retyping the commands in a shell.
- *
- * What it deliberately does NOT do is change what later starts run. Verified on v0.31.3:
- * `sbx kit add` executes the kit's startup commands once and records metadata, but leaves
- * the durable dispatcher entry written at creation untouched — a sandbox created with
- * command A and re-applied with command B runs B once and then A on every later start. The
- * persistent list is fixed when the sandbox is created (`--kit` is create-only), so a
- * changed list needs a Rebuild; that is what the Edit form offers.
- *
- * Two further limits, surfaced rather than worked around: running against a **stopped**
- * sandbox starts it (`kit add` boots the VM to run the commands), and hooks cannot be
- * removed from a live sandbox at all — sbx has no command that detaches a kit.
- */
-export async function runHooksNow(
-  root: vscode.Uri,
-  ref: sandbox.SandboxRef
-): Promise<void> {
-  await exclusive(ref.name, "Run hooks", async () => {
-    const workspace = sandbox.workspacePath();
-    if (!workspace) {
-      throw new Error("No workspace open.");
-    }
-    if ((await sandbox.state(ref)) === "absent") {
-      void vscode.window.showInformationMessage(
-        `${ref.name} does not exist yet — Connect creates it with its hooks applied.`
-      );
-      return;
-    }
-    if (!kits.hasHooks(ref.spec)) {
-      void vscode.window.showInformationMessage(
-        `${ref.name} declares no hooks. Removing hooks from a sandbox that already has ` +
-          "them needs a Rebuild — sbx cannot detach a kit from a live sandbox."
-      );
-      return;
-    }
-    const kit = await prepareHooks(root, ref, workspace);
-    if (!kit) {
-      return;
-    }
-    // No startup-log poll afterwards: `kit add` runs the commands itself and prints them
-    // (its output streams into the log through the operation context, FR-055) instead of
-    // going through the boot dispatcher, so there is no new dispatcher block to read.
-    await withProgress(`Running hooks in ${ref.name}…`, (ctx) =>
-      sbx.kitAdd(ref.name, kit, ctx)
-    );
-    // Say what just happened AND what did not: the sandbox is up to date now, but its
-    // start-up list is still the one it was created with (see the note above).
-    void vscode.window.showInformationMessage(
-      `Ran the startup hooks in ${ref.name}. Later starts still run the list this sandbox ` +
-        "was created with — Rebuild to change that."
-    );
-  });
 }
