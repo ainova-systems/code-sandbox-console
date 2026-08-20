@@ -622,32 +622,25 @@ once in the recipe instead of typed into a terminal after every start.
   the classic case). That is the mount mode's nature, not a hook-specific rule — but it is
   the reason dependency installs usually belong to a `clone` sandbox.
 * **The user maintains commands, not machinery.** The hooks are carried into the sandbox as
-  a generated `sbx` **kit** under `.sandbox/kits/<key>/`, which is gitignored, regenerated
-  from the recipe, and never hand-edited. A command that invokes a committed script
-  (`bash $SANDBOX_SOURCE/.sandbox/sync.sh`) re-reads that script on every start, so editing
-  the script needs no further action.
+  a generated `sbx` **kit** plus a generated runner script, both under
+  `.sandbox/kits/<key>/`: gitignored, rewritten from the recipe before every start, never
+  hand-edited. The kit (frozen into the sandbox at creation, as sbx requires) only bootstraps
+  the runner; the runner is what holds the commands, which is why an edit needs nothing but a
+  restart. A command that invokes a committed script of your own
+  (`bash $SANDBOX_SOURCE/.sandbox/sync.sh`) is re-read on every start for the same reason.
 * **Failures are reported, never swallowed.** A failing `setup` command fails the create
   itself (sbx says which command and its exit code, and leaves no sandbox behind). A failing
   `startup`/`services` command does **not** fail the start — the sandbox comes up and the
   hooks after it are skipped — so the extension reads the sandbox's own startup log into the
   operation log (FR-055) and raises a warning naming the sandbox, with **Show Log** and
   **Open Shell**.
-* **A changed hook list takes effect on a Rebuild; the new commands can be run now.** What a
-  sandbox does at every start is fixed when it is created, so editing the recipe does not
-  change an existing sandbox — the Edit form asks for a **Rebuild** (recreate) for a hook
-  change exactly as it does for image/mount, and says why.
-  **Run Hooks Now** (Explorer node) is the separate, non-destructive action: it runs the
-  recipe's current `startup`/`services` commands **once** in the existing sandbox, so a
-  workspace can be brought up to date — after a `git pull` on the host, or after editing the
-  script a hook calls — without recreating anything and without retyping them in a shell.
-  It does **not** change what later starts run, and says so when it finishes. `setup` is
-  never re-run by it: that phase belongs to creation. A stopped sandbox is started to run
-  the commands; a sandbox that does not exist yet is left to Connect.
-  Hooks deleted from the recipe likewise stay in an existing sandbox until a Rebuild — sbx
-  has no command that detaches a kit.
-  * The pointer pattern above is what makes this rare: a hook that calls a committed script
-    re-reads that script on every start, so the *list* changes far less often than the work
-    it does.
+* **Edit, restart, applied.** A changed `startup`/`services` list takes effect the next time
+  the sandbox starts — Stop, then Connect. Nothing else to press, no recreate, and the same
+  is true for a recipe that arrived with a `git pull`: what runs is what the recipe said at
+  the last start. Removing hooks works the same way.
+  **`setup` is the exception**, and the only one: it is the install phase that runs while the
+  sandbox is being created, so a changed `setup` list is applied by creating the sandbox
+  again — the Edit form asks for a **Rebuild** and says why.
 * The generated project CLI (FR-052) renders the same kit and passes it on create, so a
   sandbox created from an external shell gets the same hooks.
 * **Credentials a hook needs are asked for before the create.** Hooks run *inside*
@@ -754,7 +747,7 @@ Refresh
 ```
 
 Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
-`Rebuild`, `Run Hooks Now` (FR-060), `Edit`, `Delete instance`, `Remove from config`.
+`Rebuild`, `Edit`, `Delete instance`, `Remove from config`.
 
 There is no separate Start/Restart/Delete palette command.
 

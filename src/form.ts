@@ -381,19 +381,18 @@ async function apply(
     info("Saved. Create it from the Sandboxes view (Connect).");
     return;
   }
-  // FR-060: hooks belong here with image/mount, not with the live-applied fields. sbx binds
-  // the start-up list when the sandbox is created (`--kit` is create-only) and `kit add`
-  // only re-runs commands — verified: it leaves the durable entry alone — so a changed list
-  // takes effect on later starts only after a recreate.
-  const hooksChanged =
-    !sameHooks(oldSpec?.setup, spec.setup) ||
+  // FR-060 (spec 018): `startup`/`services` are read from the generated runner on every
+  // start, so an edit needs a restart and nothing else. `setup` is the exception — it is
+  // the creation-time install phase, and re-running it is what a Rebuild is.
+  const restartApplies =
     !sameHooks(oldSpec?.startup, spec.startup) ||
     !sameHooks(oldSpec?.services, spec.services);
+  const setupChanged = !sameHooks(oldSpec?.setup, spec.setup);
   const envChanged =
     oldSpec?.image !== spec.image ||
     oldSpec?.dockerfile !== spec.dockerfile ||
     (oldSpec?.mount ?? "direct") !== spec.mount ||
-    hooksChanged;
+    setupChanged;
   if (envChanged) {
     if (generatedDockerfile) {
       info(
@@ -406,7 +405,7 @@ async function apply(
         ? "image"
         : undefined,
       (oldSpec?.mount ?? "direct") !== spec.mount ? "mount" : undefined,
-      hooksChanged ? "hook" : undefined,
+      setupChanged ? "setup hook" : undefined,
     ]
       .filter(Boolean)
       .join("/");
@@ -414,10 +413,10 @@ async function apply(
       `Apply ${what} changes to ${ref.name}? This rebuilds (recreates) the sandbox; the workspace on the host mount is preserved.`,
       {
         modal: true,
-        // Say why a hook edit costs a recreate — it looks like a text change, and the
-        // Explorer's "Run Hooks Now" nearby does something similar but not the same.
-        detail: hooksChanged
-          ? "Lifecycle hooks are attached when a sandbox is created, so a changed list reaches later starts only through a recreate. Run Hooks Now (in the Sandboxes view) runs the new commands once in the existing sandbox instead, without recreating it."
+        // Say why the install phase is different from the other two hook lists, since the
+        // form shows all three side by side.
+        detail: setupChanged
+          ? "Setup hooks run once, while the sandbox is being created, so the only way to run a changed list is to create it again. Startup and services hooks are not like this — they are re-read on every start."
           : undefined,
       },
       "Rebuild"
@@ -433,9 +432,17 @@ async function apply(
     );
     return;
   }
-  // Only secrets/ports changed → apply live.
+  // Secrets/ports apply live.
   await secrets.ensureSecrets(ref);
   await publishPortsSafe(ref.name, spec.ports);
+  if (restartApplies) {
+    // The generated runner is rewritten on every Connect, so there is nothing to apply here
+    // and nothing to remember — the next start is the apply (spec 018).
+    info(
+      `Applied changes to ${ref.name}. The new startup hooks run the next time it starts — Stop, then Connect.`
+    );
+    return;
+  }
   info(`Applied changes to ${ref.name}.`);
 }
 

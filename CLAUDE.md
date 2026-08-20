@@ -83,8 +83,9 @@ recipe parse/write incl. project `name` — FR-009), `identity.ts` (`.sandbox/id
 `{id}` — local random suffix), `sbx.ts`
 (CLI wrapper: lifecycle + `template load`/`ls`/`rm` + `secret set`/discovery + `hostToSandboxPath`),
 `images.ts` (custom-image build `--pull` → save → `template load` + rebuild image-refresh policy, FR-008/FR-053),
-`kits.ts` (lifecycle hooks FR-060: renders `setup`/`startup`/`services` into the gitignored
-generated kit `.sandbox/kits/<key>/spec.yaml` passed as `sbx create --kit`; owns the kit
+`kits.ts` (lifecycle hooks FR-060: renders the gitignored
+generated kit `.sandbox/kits/<key>/spec.yaml` passed as `sbx create --kit` plus the `startup.sh`
+runner it bootstraps, rewritten before every start; owns the kit
 schema and the `SANDBOX_*` variables), `secrets.ts` (provision
 missing secrets via cached-entry picker/prompt, FR-032+FR-051), `blobs.ts` (per-project
 secret cache: DPAPI blobs in `~/.sbx`, shared with the generated CLI — FR-051),
