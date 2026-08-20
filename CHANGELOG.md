@@ -5,6 +5,51 @@ All notable changes to this extension are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-20
+
+A sandbox can now prepare its own workspace and keep its own services running, declared once
+in `.sandbox/config.yaml`. Creating one is also refused up front — with an explanation —
+where it used to fail in ways that were hard to see.
+
+### Added
+
+- **Lifecycle hooks.** Three optional lists of shell commands per sandbox:
+  - `setup` — once, while the sandbox is created;
+  - `startup` — on every start, **before the agent attaches**;
+  - `services` — on every start, in the background, for processes that must stay up.
+
+  Edit a list, restart the sandbox (Stop, then Connect) and the new commands run — no
+  recreate, nothing else to press. Emptying a list stops those commands the same way.
+  `setup` is the exception: it belongs to creation, so changing it asks for a Rebuild.
+- **Hooks work the same under both mount modes.** Every command sees `$SANDBOX_WORKSPACE`
+  (the workspace inside the sandbox) and `$SANDBOX_SOURCE` (your working tree — read-only
+  when the sandbox runs on its own clone). That read-only view is how a cloned sandbox can
+  be given the files git does not carry, such as a local `.env` or generated configuration,
+  without anything writing into your checkout.
+- **You are told when a hook fails.** Each command's result is recorded, the ones after a
+  failure are skipped, and a service that dies the moment it starts is reported as failed
+  instead of started. The extension surfaces this after the start with **Show Log** and
+  **Open Shell**, and a failing `setup` command fails the creation itself, naming the
+  command and its exit code.
+- **The generated project CLI keeps up.** `.sandbox/scripts/sbx.sh` runs the same hooks, so
+  a sandbox created or connected from a shell behaves like one created from the editor.
+
+### Changed
+
+- **Creating a sandbox on a shallow repository is refused, with the fix offered.** In the
+  mount mode that copies your repository into the sandbox, Docker Sandboxes cannot clone
+  from a shallow checkout, and the sandbox used to come up with an empty workspace. The
+  create is now declined before anything is made, and **Open Terminal** types
+  `git fetch --unshallow` into a terminal in your repository — running it stays your call.
+- **A host that cannot run sandboxes says so.** When Docker Sandboxes is missing, signed
+  out, or unhealthy, the status bar and the Sandboxes view report exactly that — with the
+  installation's own remedy — instead of showing an empty list that looks like "no sandboxes
+  here". **Sandbox: Check Prerequisites** re-runs the check, so installing or signing in
+  takes effect without reloading the window.
+- **The Docker requirement is stated where it applies.** Docker Desktop is needed only for
+  building a custom Dockerfile; that is now said in the form where the option is chosen,
+  rather than being implied for the extension as a whole.
+
 ## [0.4.0] - 2026-08-05
 
 Sandboxes are now named after what they are, the views follow the config file instead of a
@@ -153,6 +198,7 @@ Terminal-first commands over the `sbx` CLI (create, attach, stop, shell) with st
 discovery of existing sandboxes and per-repo sandbox identity in a single local file.
 Superseded by 0.2.0 and listed here only for history.
 
+[0.5.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ainova-systems/code-sandbox-console/releases/tag/v0.2.0
