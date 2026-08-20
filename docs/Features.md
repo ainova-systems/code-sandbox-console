@@ -632,6 +632,14 @@ once in the recipe instead of typed into a terminal after every start.
   sandbox that already has them needs a Rebuild — sbx cannot detach a kit.
 * The generated project CLI (FR-052) renders the same kit and passes it on create, so a
   sandbox created from an external shell gets the same hooks.
+* **Credentials a hook needs are asked for before the create.** Hooks run *inside*
+  `sbx create`, before the point where declared secrets are normally provisioned (FR-032),
+  and a failed `setup` leaves no sandbox — so the per-sandbox prompt would be unreachable on
+  every retry. When a sandbox declares both hooks and secrets, the missing ones are offered
+  up front at **global** scope, which is the only scope that can exist before the sandbox
+  does; skipping is allowed and the usual per-sandbox prompt still follows the create. The
+  generated CLI cannot ask, so it says the same thing on stderr rather than widening a
+  credential to global scope on the user's behalf.
 * **Never a place for secret values.** Hooks live in the committed recipe and sbx echoes
   them into the create output, hence into the operation log — credentials go through
   FR-032/FR-051, and a hook consumes them the way any other in-sandbox process does. Hook
@@ -757,8 +765,9 @@ subcommands instead of re-encoding naming/lifecycle/secret rules as prose
 * Preconditions mirror the UI's: the create path refuses `mount: clone` on a shallow
   repository with the same message and the same fail-open rule (FR-058).
 * Lifecycle hooks mirror the UI's too: the create path renders the same kit from the
-  recipe and passes it with `--kit` (FR-060), so a sandbox created from a shell is not a
-  hookless one.
+  recipe, validates it the same way, and passes it with `--kit` (FR-060) — including on
+  `runner-create`, whose clone-mode runners are exactly where an unprepared workspace
+  hurts most — so a sandbox created from a shell is not a hookless one.
 
 ## FR-053 Fresh Image Rebuild
 

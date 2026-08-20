@@ -36,20 +36,37 @@ export async function missingSecrets(ref: SandboxRef): Promise<string[]> {
 /**
  * Prompt for and set any missing secrets for this sandbox. The sandbox must already exist
  * if a per-sandbox scope is chosen. Returns the number provisioned.
+ *
+ * `beforeCreate` is the FR-060 case: the sandbox does not exist yet, but its lifecycle
+ * hooks are about to run inside `sbx create` and may need a credential. `sbx secret set`
+ * can only scope to a sandbox that exists, so the per-sandbox choice is withheld rather
+ * than offered and then failed — global is the one scope that can be in place before a
+ * create. Skipping is fine: the same secrets are re-checked after the create, where the
+ * per-sandbox choice is available again.
  */
-export async function ensureSecrets(ref: SandboxRef): Promise<number> {
+export async function ensureSecrets(
+  ref: SandboxRef,
+  opts?: { beforeCreate?: boolean }
+): Promise<number> {
   const missing = await missingSecrets(ref);
   let count = 0;
   for (const service of missing) {
     const scopePick = await vscode.window.showQuickPick<ScopePick>(
-      [
-        { label: `This sandbox`, description: ref.name, scope: ref.name },
-        { label: "Global", description: "all sandboxes", scope: "global" },
-        { label: "Skip", scope: "" },
-      ],
+      opts?.beforeCreate
+        ? [
+            { label: "Global", description: "all sandboxes", scope: "global" },
+            { label: "Skip", description: "hooks run without it", scope: "" },
+          ]
+        : [
+            { label: `This sandbox`, description: ref.name, scope: ref.name },
+            { label: "Global", description: "all sandboxes", scope: "global" },
+            { label: "Skip", scope: "" },
+          ],
       {
         title: `Secret: ${serviceLabel(service)} (${service})`,
-        placeHolder: "Where should this credential be stored?",
+        placeHolder: opts?.beforeCreate
+          ? `${ref.name} runs setup hooks before it exists — only a global credential can be in place by then`
+          : "Where should this credential be stored?",
         ignoreFocusOut: true,
       }
     );

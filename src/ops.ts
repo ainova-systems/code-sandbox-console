@@ -296,14 +296,21 @@ async function prepareHooks(
   });
   if (dir) {
     await kits.assertValid(dir);
+    if (ref.spec.secrets.length > 0) {
+      // FR-060 × FR-032: the hooks are about to run inside `sbx create`, before the point
+      // where declared secrets are normally provisioned — and a `setup` hook that fails
+      // takes the whole create with it, so the sandbox that the per-sandbox prompt needs
+      // never exists and the retry fails identically. Offer the credentials here, at the
+      // one scope that can exist before a sandbox does. Outside every progress spinner:
+      // a modal input must never compete with one (§12).
+      await secrets.ensureSecrets(ref, { beforeCreate: true });
+    }
   }
   return dir;
 }
 
 /** How long to wait for the startup dispatcher to finish before giving up on reporting. */
 const STARTUP_REPORT_MS = 90_000;
-/** Tolerance for host/VM clock skew when deciding whether a run is this start's. */
-const STARTUP_CLOCK_SKEW_MS = 60_000;
 
 /**
  * FR-060: say what the startup hooks did. Call with `void` after a start.
@@ -314,9 +321,14 @@ const STARTUP_CLOCK_SKEW_MS = 60_000;
  * inside the VM. An agent then works in a workspace that was never prepared, and nothing
  * on screen says so.
  *
- * `startedAt` is when the caller started the sandbox: the log accumulates one block per
- * start, so the block's own timestamp is what distinguishes this start's run from the
- * previous one still sitting in the file.
+ * `startedAt` is when the caller started the sandbox. The log accumulates one block per
+ * start and the previous one is still in the file, so a block counts as this start's only
+ * when it is stamped at or after `startedAt`, **or** when it differs from the block that
+ * was already there when polling began. The second rule is what a restart soon after the
+ * previous run needs: the sandbox can report `running` before the dispatcher has appended
+ * its new header, and a clock offset between host and VM would otherwise let the old block
+ * pass as fresh. When neither rule is ever satisfied this reports nothing — silence beats
+ * attributing a stale failure (or a stale success) to the run the user is watching.
  */
 export async function reportStartupHooks(
   root: vscode.Uri,
@@ -328,6 +340,9 @@ export async function reportStartupHooks(
   }
   const deadline = Date.now() + STARTUP_REPORT_MS;
   let run: sbx.StartupRun | undefined;
+  // The block already in the file, identified by its header stamp (or its text when the
+  // header cannot be parsed). Set from the first read that turns out to be stale.
+  let stale: string | undefined;
   while (Date.now() < deadline && !run) {
     let running = false;
     try {
@@ -339,19 +354,24 @@ export async function reportStartupHooks(
       // `startupRun` uses `sbx exec`, which would START a stopped sandbox; the state check
       // above is what keeps this read-only.
       const latest = await sbx.startupRun(ref.name).catch(() => undefined);
-      const fresh =
-        latest !== undefined &&
-        (latest.at === undefined ||
-          latest.at >= startedAt - STARTUP_CLOCK_SKEW_MS);
-      if (latest && fresh && (latest.complete || latest.failures.length > 0)) {
-        run = latest;
-        break;
+      if (latest) {
+        const id = latest.at !== undefined ? String(latest.at) : latest.text;
+        const isThisStart =
+          (latest.at !== undefined && latest.at >= startedAt) ||
+          (stale !== undefined && id !== stale);
+        if (isThisStart && (latest.complete || latest.failures.length > 0)) {
+          run = latest;
+          break;
+        }
+        if (!isThisStart) {
+          stale ??= id;
+        }
       }
     }
     await sleep(1500);
   }
   if (!run) {
-    return; // still running after the deadline, or nothing recognisable to report
+    return; // still running after the deadline, or nothing this start can be credited with
   }
   log.block(`startup hooks — ${ref.name}`, run.text);
   if (run.failures.length === 0) {

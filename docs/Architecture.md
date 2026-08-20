@@ -638,11 +638,16 @@ re-encoding these rules as prose and calls subcommands instead
   (FR-058) — parity here is what keeps a script-driven create from producing the empty
   workspace the UI now prevents.
 - **Same hooks as the UI.** `write_kit` renders the recipe's `setup`/`startup`/`services`
-  into the same gitignored `.sandbox/kits/<key>/spec.yaml` and passes `--kit` on create
-  (FR-060, §7), mirroring `kits.ts`. Commands are emitted as YAML single-quoted scalars
-  (the one escape being a doubled quote), so a command carrying quotes, `#` or `:`
-  survives the round trip. The bash recipe reader handles the **block** sequence form the
-  extension writes, not the inline `[a, b]` form.
+  into the same gitignored `.sandbox/kits/<key>/spec.yaml`, runs the same
+  `sbx kit validate` preflight, and passes `--kit` on create (FR-060, §7) — on
+  `runner-create` too, under the runner's own name and its own kit directory, since a
+  runner is a separate clone-mode sandbox and the kit name is what sbx keys its dispatcher
+  entry by. Reading commands back out of the recipe **decodes** YAML scalars (single-quoted
+  `''`, double-quoted backslash escapes) rather than stripping the outer quotes: a command
+  such as `echo "it's: #ok"` is stored quoted-and-escaped, and stripping alone would hand
+  sbx a different command than the extension does. Re-emitted as single-quoted scalars.
+  The bash reader handles the **block** sequence form the extension writes, not the inline
+  `[a, b]` form or block/folded scalars.
 - **Runners.** `runner-create <slug>` instantiates the recipe's `default: true` entry as
   an **ephemeral** clone-mode instance `<name>-<key>-<id>-p<slug>` (agent/image/secret
   names/caps from the recipe; defaults `-m 8g --cpus 4`) — never written back into the
@@ -719,9 +724,19 @@ re-encoding these rules as prose and calls subcommands instead
   schema is a moving target, and this is the assumption most likely to need revisiting.
 - **A failing startup hook cannot be prevented, only reported.** sbx keeps the sandbox
   running and skips the remaining hooks; the extension reads
-  `/var/log/sbx-kit-startup.log` back and warns (FR-060). The read is polled for up to 90s
-  after a start and takes the newest dispatcher block by its own timestamp, so a hook that
-  runs longer than that, or a VM clock far from the host's, degrades to no report rather
-  than to a wrong one. `setup` failures need none of this — they fail the create.
+  `/var/log/sbx-kit-startup.log` back and warns (FR-060). The file accumulates one block
+  per start and cannot be read before the start (the read itself would start a stopped
+  sandbox), so a block is credited to this start only when it is stamped at or after the
+  start, **or** when it differs from the block that was already there. A hook still running
+  after 90s, or a VM clock behind the host's on a first-read-is-new race, therefore
+  degrades to **no report** rather than to a wrong one. `setup` failures need none of this
+  — they fail the create itself.
+- **A create-time hook can only use a globally-scoped credential.** `sbx secret set` scopes
+  either globally or to an existing sandbox, and hooks run inside the create, so the
+  per-sandbox scope cannot exist yet (FR-060 × FR-032). The extension offers the global
+  scope up front when a sandbox declares both; a user who insists on per-sandbox scope for
+  a credential a `setup` hook needs will keep failing the create, since the failure removes
+  the sandbox the prompt would attach to. Moving that step to `startup` fixes it — the
+  sandbox survives, the secret is provisioned, the next start succeeds.
 - **Deferred scope**: filesystem/network policy UIs (Features §12), MCP endpoints
   (Features §13), third-party/reusable kits (`--kit` by OCI/git/ZIP reference, §7).

@@ -197,6 +197,33 @@ cfg_default_key() {
   ' "$CFG"
 }
 
+# Hook commands are arbitrary shell, so unlike the scalar fields above they really do meet
+# YAML quoting: a command carrying a quote plus a ":" or "#" comes back single-quoted with
+# doubled quotes, or double-quoted with backslash escapes. Stripping the outer quotes (what
+# unquote() does) would leave those escapes in the command and hand sbx a different one than
+# the extension does. Decode the two quoted forms properly instead; block/folded scalars are
+# not produced by the extension and are not supported here (§13).
+yaml_scalar() {
+  awk -v q="'" '{
+    s=$0
+    if (length(s)>=2 && substr(s,1,1)==q && substr(s,length(s),1)==q) {
+      s=substr(s,2,length(s)-2); gsub(q q, q, s); print s; next
+    }
+    if (length(s)>=2 && substr(s,1,1)=="\\"" && substr(s,length(s),1)=="\\"") {
+      s=substr(s,2,length(s)-2); out=""
+      for (i=1;i<=length(s);i++) {
+        c=substr(s,i,1)
+        if (c=="\\\\") {
+          i++; n=substr(s,i,1)
+          if (n=="n") out=out "\\n"; else if (n=="t") out=out "\\t"; else out=out n
+        } else out=out c
+      }
+      print out; next
+    }
+    print s
+  }'
+}
+
 cfg_list() { # <key> <field> — items of a block sequence (the shape the extension writes)
   awk -v key="$1" -v field="$2" '
     /^sandboxes:/ {insb=1; next}
@@ -206,7 +233,7 @@ cfg_list() { # <key> <field> — items of a block sequence (the shape the extens
     inkey && index($0, "    " field ":")==1 {inlist=1; next}
     inlist && /^      - / {s=$0; sub(/^ +- +/,"",s); print s; next}
     inlist && /^    [^ ]/ {inlist=0}
-  ' "$CFG" | unquote
+  ' "$CFG" | yaml_scalar
 }
 
 cfg_has_secret() { # <key> <service>
@@ -329,16 +356,22 @@ refresh_image() { # <key> — FR-053: a rebuild starts from the freshest obtaina
 # containing anything shell-ish still survives the round trip into the kit.
 yaml_q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
 
-write_kit() { # <key> — render the hook kit; print its directory, or nothing when hookless
-  local key="$1" dir="$ROOT/.sandbox/kits/$1" inst ws src
+# <key> [instance] [dir-name] [mount] — render the hook kit; print its directory, or nothing
+# when the entry declares no hooks. The instance/dir/mount overrides exist for runners,
+# which are separate clone-mode sandboxes derived from a recipe entry: the kit must carry
+# the RUNNER's name (that name is the dispatcher entry) and must not overwrite the kit of
+# the entry it came from.
+write_kit() {
+  local key="$1" inst="\${2:-}" dir="$ROOT/.sandbox/kits/\${3:-$1}" mount="\${4:-}" ws src
   if [ -z "$(cfg_list "$key" setup)$(cfg_list "$key" startup)$(cfg_list "$key" services)" ]; then
     return 0
   fi
-  inst=$(instance_name "$key")
+  [ -n "$inst" ] || inst=$(instance_name "$key")
+  [ -n "$mount" ] || mount=$(cfg_field "$key" mount)
   # In Git Bash $ROOT already IS the in-sandbox path (/d/...); under mount: clone the host
   # tree is mounted read-only at a fixed path instead.
   ws="$ROOT"
-  if [ "$(cfg_field "$key" mount)" = "clone" ]; then src=/run/sandbox/source; else src="$ROOT"; fi
+  if [ "$mount" = "clone" ]; then src=/run/sandbox/source; else src="$ROOT"; fi
   mkdir -p "$dir"
   {
     printf 'schemaVersion: "1"\\nkind: mixin\\nname: %s\\n' "$inst"
@@ -367,6 +400,10 @@ write_kit() { # <key> — render the hook kit; print its directory, or nothing w
   # Generated artefact, like the extension's: regenerated from the recipe, never committed.
   grep -qx 'kits/' "$ROOT/.sandbox/.gitignore" 2>/dev/null \\
     || printf 'kits/\\n' >> "$ROOT/.sandbox/.gitignore"
+  # Same fail-before-mutation check the extension runs (FR-060): an sbx whose experimental
+  # kit schema has moved must refuse here, not halfway through a create.
+  "$SBX" kit validate "$dir" >/dev/null 2>&1 \\
+    || die "the hook kit generated for sandboxes.$key was rejected by this sbx version (run: $SBX kit validate $dir). Remove the setup/startup/services entries to create without hooks"
   printf '%s' "$dir"
 }
 
@@ -393,9 +430,25 @@ create_instance() { # <key>
   # FR-060: hooks can only be attached at creation, so they are rendered here and passed
   # with --kit — a sandbox created from this script gets the same hooks as one created
   # from the Explorer.
-  kit=$(write_kit "$key")
+  # The explicit "|| exit 1" matters: write_kit's die() runs inside this command
+  # substitution's subshell, so its exit would otherwise be swallowed and the sandbox
+  # created silently without its hooks.
+  kit=$(write_kit "$key") || exit 1
   [ -n "$kit" ] && args+=(--kit "$kit")
+  warn_hook_secrets "$key"
   "$SBX" "\${args[@]}" "$agent" "$ROOT"
+}
+
+warn_hook_secrets() { # <key> — FR-060 × FR-032, before the create that runs the hooks
+  # A hook runs INSIDE the create, before a secret can be scoped to a sandbox that does
+  # not exist yet, so provision_recipe_secrets below is too late for it. Say so rather than
+  # silently widening the credential to global scope — that is the user's call to make
+  # (the extension asks; a non-interactive script must not decide it).
+  [ -n "$(cfg_list "$1" setup)$(cfg_list "$1" startup)$(cfg_list "$1" services)" ] || return 0
+  cfg_has_secret "$1" github || return 0
+  if ! "$SBX" secret ls 2>/dev/null | awk '$1=="(global)" && $3=="github" {f=1} END {exit !f}'; then
+    printf 'sbx.sh: sandboxes.%s declares hooks and the github secret, but no global github secret exists. Hooks run during create, before a per-sandbox secret can be set — if a hook needs GitHub, provision it globally first: %s secret set -g github\\n' "$1" "$SBX" >&2
+  fi
 }
 
 provision_recipe_secrets() { # <key> <instance> — best-effort, github only (the cached chain)
@@ -567,6 +620,12 @@ cmd_runner_create() { # <slug> [-m 8g] [--cpus 4] — ephemeral clone runner off
   # base first. Never written into the recipe: runners are ephemeral by name contract.
   local args=(create --clone --name "$rname" -m "$mem" --cpus "$cpus")
   [ -n "$img" ] && args+=(-t "$img")
+  # FR-060: a runner is always clone-mode, which is exactly where an unhooked workspace
+  # hurts most — it carries git history and nothing else. Render the entry's hooks under
+  # the runner's own name so its startup commands and services run like any other sandbox.
+  local kit; kit=$(write_kit "$key" "$rname" "runner-$slug" clone) || exit 1
+  [ -n "$kit" ] && args+=(--kit "$kit")
+  warn_hook_secrets "$key"
   "$SBX" "\${args[@]}" "$agent" "$ROOT"
   provision_recipe_secrets "$key" "$rname"
   printf 'runner:   %s\\n' "$rname"
