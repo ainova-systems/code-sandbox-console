@@ -266,8 +266,8 @@ Stopping must preserve:
   Every rebuild starts from the freshest obtainable image (FR-053); the build streams
   into the progress box and can be cancelled from it (FR-055/FR-056).
 * **Edit** — add/rotate secrets and published ports on a **running** sandbox
-  (non-destructive, no recreate). Kit injection (`sbx kit add`) is a planned follow-up
-  (Architecture §7).
+  (non-destructive, no recreate). Changed lifecycle hooks are *not* in this group: like
+  image and mount, they are bound at creation, so they ask for a recreate (FR-060).
 
 ## FR-008 Custom Environment (preinstalled tooling)
 
@@ -307,6 +307,9 @@ sandboxes:
     image: myrepo-dev:latest  # optional custom image
     dockerfile: Dockerfile    # optional; if set → build `image` from .sandbox/Dockerfile
     mount: direct             # optional: direct | clone
+    setup: []                 # optional: commands run once at creation (FR-060)
+    startup: []               # optional: commands run on every start, before the agent
+    services: []              # optional: commands run on every start, in the background
     secrets: [github]         # secret NAMES only (values via FR-032)
     ports: [5000, 5173]       # optional published ports
     default: true             # optional: the sandbox the status bar / palette target (FR-050)
@@ -590,6 +593,81 @@ never fall silent and never claim the repo has no sandboxes.
 
 ---
 
+## FR-060 Lifecycle Hooks
+
+A sandbox shall be able to **prepare its own workspace and run its own services**, declared
+once in the recipe instead of typed into a terminal after every start.
+
+* Three optional lists of shell commands per sandbox in `.sandbox/config.yaml` (FR-009),
+  named after when they run:
+  * **`setup`** — once, when the sandbox is created. The network and the host tree are
+    available; under `mount: clone` the **workspace is not** (the clone is made later), so
+    repo-dependent work does not belong here. Runs under `sh`.
+  * **`startup`** — on every start, **before the agent attaches**, under `bash -lc`. Must be
+    idempotent; this is where a workspace is brought up to date.
+  * **`services`** — on every start, in the background: processes that must be running while
+    the agent works. This is the restart policy `sbx` itself does not have.
+* **Mount-agnostic by construction.** Every hook sees `$SANDBOX_WORKSPACE` (the workspace
+  inside the sandbox), `$SANDBOX_SOURCE` (the host working tree — read-only at
+  `/run/sandbox/source` under `mount: clone`, the workspace itself under `direct`),
+  `$SANDBOX_NAME` and `$SANDBOX_KEY`, so one command line works under both mount modes.
+  `$SANDBOX_SOURCE` is what makes a clone usable for repositories whose work needs files git
+  does not carry — `.env.local`, generated configuration, data directories — without the
+  extension ever writing into the user's working tree.
+  **What a hook may write to follows the mount, not the hook.** Under `mount: clone` the
+  workspace is the sandbox's private copy and `$SANDBOX_SOURCE` is read-only, so a hook
+  cannot touch the host tree at all. Under `mount: direct` the workspace **is** the host
+  tree: a hook that installs dependencies there writes into the user's checkout, with Linux
+  artefacts in a directory the host may also use (`node_modules` built inside the sandbox is
+  the classic case). That is the mount mode's nature, not a hook-specific rule — but it is
+  the reason dependency installs usually belong to a `clone` sandbox.
+* **The user maintains commands, not machinery.** The hooks are carried into the sandbox as
+  a generated `sbx` **kit** under `.sandbox/kits/<key>/`, which is gitignored, regenerated
+  from the recipe, and never hand-edited. A command that invokes a committed script
+  (`bash $SANDBOX_SOURCE/.sandbox/sync.sh`) re-reads that script on every start, so editing
+  the script needs no further action.
+* **Failures are reported, never swallowed.** A failing `setup` command fails the create
+  itself (sbx says which command and its exit code, and leaves no sandbox behind). A failing
+  `startup`/`services` command does **not** fail the start — the sandbox comes up and the
+  hooks after it are skipped — so the extension reads the sandbox's own startup log into the
+  operation log (FR-055) and raises a warning naming the sandbox, with **Show Log** and
+  **Open Shell**.
+* **A changed hook list takes effect on a Rebuild; the new commands can be run now.** What a
+  sandbox does at every start is fixed when it is created, so editing the recipe does not
+  change an existing sandbox — the Edit form asks for a **Rebuild** (recreate) for a hook
+  change exactly as it does for image/mount, and says why.
+  **Run Hooks Now** (Explorer node) is the separate, non-destructive action: it runs the
+  recipe's current `startup`/`services` commands **once** in the existing sandbox, so a
+  workspace can be brought up to date — after a `git pull` on the host, or after editing the
+  script a hook calls — without recreating anything and without retyping them in a shell.
+  It does **not** change what later starts run, and says so when it finishes. `setup` is
+  never re-run by it: that phase belongs to creation. A stopped sandbox is started to run
+  the commands; a sandbox that does not exist yet is left to Connect.
+  Hooks deleted from the recipe likewise stay in an existing sandbox until a Rebuild — sbx
+  has no command that detaches a kit.
+  * The pointer pattern above is what makes this rare: a hook that calls a committed script
+    re-reads that script on every start, so the *list* changes far less often than the work
+    it does.
+* The generated project CLI (FR-052) renders the same kit and passes it on create, so a
+  sandbox created from an external shell gets the same hooks.
+* **Credentials a hook needs are asked for before the create.** Hooks run *inside*
+  `sbx create`, before the point where declared secrets are normally provisioned (FR-032),
+  and a failed `setup` leaves no sandbox — so the per-sandbox prompt would be unreachable on
+  every retry. When a sandbox declares both hooks and secrets, the missing ones are offered
+  up front at **global** scope, which is the only scope that can exist before the sandbox
+  does; skipping is allowed and the usual per-sandbox prompt still follows the create. The
+  generated CLI cannot ask, so it says the same thing on stderr rather than widening a
+  credential to global scope on the user's behalf.
+* **Never a place for secret values.** Hooks live in the committed recipe and sbx echoes
+  them into the create output, hence into the operation log — credentials go through
+  FR-032/FR-051, and a hook consumes them the way any other in-sandbox process does. Hook
+  commands run inside the microVM only; the extension never executes them on the host.
+* The kit is validated (`sbx kit validate`) before anything is created, in the same
+  preflight band as FR-040/FR-058. `sbx kit` is an experimental upstream command; a schema
+  it stops accepting is refused with the CLI's own message instead of failing mid-create.
+
+---
+
 # 10. Sandbox Explorer
 
 A dedicated VS Code sidebar shall be available, **scoped to the current repo**.
@@ -676,7 +754,7 @@ Refresh
 ```
 
 Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
-`Rebuild`, `Edit`, `Delete instance`, `Remove from config`.
+`Rebuild`, `Run Hooks Now` (FR-060), `Edit`, `Delete instance`, `Remove from config`.
 
 There is no separate Start/Restart/Delete palette command.
 
@@ -704,6 +782,10 @@ subcommands instead of re-encoding naming/lifecycle/secret rules as prose
   (a committed script is repo-controlled input).
 * Preconditions mirror the UI's: the create path refuses `mount: clone` on a shallow
   repository with the same message and the same fail-open rule (FR-058).
+* Lifecycle hooks mirror the UI's too: the create path renders the same kit from the
+  recipe, validates it the same way, and passes it with `--kit` (FR-060) — including on
+  `runner-create`, whose clone-mode runners are exactly where an unprepared workspace
+  hurts most — so a sandbox created from a shell is not a hookless one.
 
 ## FR-053 Fresh Image Rebuild
 

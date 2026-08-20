@@ -124,11 +124,16 @@ export function destroy(sandbox: SandboxRef): Promise<void> {
   return sbx.remove(sandbox.name);
 }
 
-/** Create the sandbox without attaching (used before opening a shell). */
+/**
+ * Create the sandbox without attaching (used before opening a shell). `kit` is the
+ * generated lifecycle-hook directory (FR-060, kits.ts) — attachable only here, since sbx
+ * refuses `--kit` against an existing sandbox.
+ */
 export function create(
   sandbox: SandboxRef,
   workspace: string,
-  ctx?: log.OpContext
+  ctx?: log.OpContext,
+  kit?: string
 ): Promise<void> {
   return sbx.create(
     {
@@ -137,6 +142,7 @@ export function create(
       workspace,
       clone: sandbox.spec.mount === "clone",
       image: sandbox.spec.image,
+      kit,
     },
     ctx
   );

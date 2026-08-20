@@ -395,6 +395,15 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
           }
         })
     ),
+    // FR-060: run the recipe's current startup hooks in an existing sandbox, without a
+    // Rebuild and without retyping them in a shell. Offered per node because config.yaml is
+    // a file people edit by hand — a change made there has no form Save to hang it off.
+    // It does not change what later starts run (ops.runHooksNow explains why).
+    vscode.commands.registerCommand(
+      "sandboxConsole.item.runHooks",
+      (node?: SandboxNode) =>
+        withNode(node, "run hooks", (root, ref) => ops.runHooksNow(root, ref))
+    ),
     vscode.commands.registerCommand(
       "sandboxConsole.item.edit",
       (node?: SandboxNode) =>
@@ -438,6 +447,7 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
               }
             }
             await removeFromConfig(root, n.key);
+            await ops.removeHooks(root, n.key); // FR-060: its generated kit goes with it
           }
         })
     ),
