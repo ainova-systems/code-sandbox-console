@@ -220,6 +220,9 @@ yaml_scalar() {
       }
       print out; next
     }
+    # Plain scalar: YAML ends it at an unquoted " #", so a trailing comment is NOT part of
+    # the command. Only here — inside quotes a "#" is data (and the branches above returned).
+    sub(/[ \\t]+#.*$/, "", s); sub(/[ \\t]+$/, "", s)
     print s
   }'
 }

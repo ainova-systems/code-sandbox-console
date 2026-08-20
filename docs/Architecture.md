@@ -671,11 +671,12 @@ re-encoding these rules as prose and calls subcommands instead
   the kit name is what sbx keys its dispatcher entry by. `connect` on an existing sandbox
   rewrites the runner before `sbx run`, mirroring the extension, so "edit, restart, applied"
   holds from a shell as well (spec 018). Reading commands back out of the recipe **decodes**
-  YAML scalars (single-quoted `''`, double-quoted backslash escapes) rather than stripping
-  the outer quotes: a command such as `echo "it's: #ok"` is stored quoted-and-escaped, and
-  stripping alone would hand sbx a different command than the extension does. The bash reader
-  handles the **block** sequence form the extension writes, not the inline `[a, b]` form or
-  block/folded scalars.
+  YAML scalars the way a parser does — single-quoted `''`, double-quoted backslash escapes,
+  and a trailing ` #comment` dropped from a **plain** scalar but kept inside a quoted one, so
+  `echo "it's: #ok"` survives while `npm ci   # note to self` does not smuggle the note into
+  the command. Stripping the outer quotes alone would hand sbx a different command than the
+  extension does. The bash reader handles the **block** sequence form the extension writes,
+  not the inline `[a, b]` form or block/folded scalars.
 - **Runners.** `runner-create <slug>` instantiates the recipe's `default: true` entry as
   an **ephemeral** clone-mode instance `<name>-<key>-<id>-p<slug>` (agent/image/secret
   names/caps from the recipe; defaults `-m 8g --cpus 4`) — never written back into the
