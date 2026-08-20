@@ -630,10 +630,12 @@ once in the recipe instead of typed into a terminal after every start.
   (`bash $SANDBOX_SOURCE/.sandbox/sync.sh`) is re-read on every start for the same reason.
 * **Failures are reported, never swallowed.** A failing `setup` command fails the create
   itself (sbx says which command and its exit code, and leaves no sandbox behind). A failing
-  `startup`/`services` command does **not** fail the start — the sandbox comes up and the
-  hooks after it are skipped — so the extension reads the sandbox's own startup log into the
-  operation log (FR-055) and raises a warning naming the sandbox, with **Show Log** and
-  **Open Shell**.
+  `startup` command does **not** fail the start — the sandbox comes up and the commands after
+  it are skipped — and a `services` entry that dies the moment it is launched would otherwise
+  look started. Both are recorded per command (`ok` / `fail … exit=<n>`, with the command's
+  own output) in a log the sandbox keeps for its current start; after every start the
+  extension reads it into the operation log (FR-055) and raises a warning naming the sandbox,
+  with **Show Log** and **Open Shell**.
 * **Edit, restart, applied.** A changed `startup`/`services` list takes effect the next time
   the sandbox starts — Stop, then Connect. Nothing else to press, no recreate, and the same
   is true for a recipe that arrived with a `git pull`: what runs is what the recipe said at

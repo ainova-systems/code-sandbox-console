@@ -99,6 +99,10 @@ function shellQuote(value: string): string {
  * is a generated artefact, so a fresh clone legitimately lacks it, and the fix is one action.
  */
 function bootstrapCommand(key: string): string[] {
+  // The key is interpolated into a shell command that runs inside the sandbox, so hold it to
+  // the same containment rule as the directory it names (`kitDirUri`, below). ensureKit
+  // already checks it there; this keeps the guarantee if `renderKit` is called on its own.
+  assertKey(key);
   const script = `"$SANDBOX_SOURCE"/${runnerPath(key)}`;
   return [
     "bash",
@@ -168,6 +172,15 @@ export function renderKit(opts: {
  * keys of this shape.
  */
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function assertKey(key: string): string {
+  if (!KEY_RE.test(key)) {
+    throw new Error(
+      `.sandbox/config.yaml: "${key}" cannot name a sandbox — use only letters, digits and "._-", starting with a letter or digit (no path separators).`
+    );
+  }
+  return key;
+}
 
 /**
  * The generated runner script: the recipe's `startup` and `services` as bash, rewritten
@@ -242,12 +255,7 @@ export function renderRunner(spec: SandboxSpec): string {
 }
 
 function kitDirUri(root: vscode.Uri, key: string): vscode.Uri {
-  if (!KEY_RE.test(key)) {
-    throw new Error(
-      `.sandbox/config.yaml: "${key}" cannot name a sandbox — use only letters, digits and "._-", starting with a letter or digit (no path separators).`
-    );
-  }
-  return vscode.Uri.joinPath(root, CONFIG_DIR, KITS_DIR, key);
+  return vscode.Uri.joinPath(root, CONFIG_DIR, KITS_DIR, assertKey(key));
 }
 
 /**

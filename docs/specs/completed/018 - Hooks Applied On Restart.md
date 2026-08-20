@@ -58,8 +58,11 @@ re-running it is what a Rebuild is for.
   timestamp/baseline reasoning `reportStartupHooks` needed to tell this start's dispatcher
   block from the previous one, and the failure warning keeps working as before.
 - **Services are backgrounded by the runner**, since the single bootstrap entry is a
-  foreground command: each `services` entry is started detached with its output captured, and
-  a failure to start is reported like any other hook failure.
+  foreground command: each `services` entry is started detached with its output captured into
+  its own file (an endless service must not flood the log the report reads). A service that
+  is gone a second later is reported as `fail … exited immediately` with its output quoted
+  into the main log — it does not stop the remaining hooks, but it is never called *started*,
+  and the run's end marker says how many failed to come up.
 - **A missing runner script fails loudly.** The bootstrap refuses with a message naming the
   file and the fix (Connect from VS Code, or `sbx.sh connect`, regenerates it) instead of
   silently starting a sandbox with no hooks — the kit directory is a gitignored artefact, so
