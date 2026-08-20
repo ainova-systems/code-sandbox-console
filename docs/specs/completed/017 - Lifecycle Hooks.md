@@ -67,7 +67,7 @@ schema is *not* the one on docs.docker.com — see Decisions):
 | Is the kit frozen at create? | Yes. Editing the kit directory afterwards changes nothing until the kit is re-applied. |
 | Does a failing `install` fail the create? | **Yes** — `sbx create` exits 1 with the kit name, the command, its exit code and a `docker run` repro hint, and leaves no sandbox behind. |
 | Does a failing `startup` fail the start? | **No.** Create/start exits 0, the sandbox runs, and the dispatcher **stops without running the remaining hooks**. The only trace is `/var/log/sbx-kit-startup.log`: `fail <script> exit=<n>`. |
-| Does re-applying the same kit duplicate its startup commands? | **No.** `sbx kit add <sandbox> <dir>` runs them once and replaces the same-named dispatcher entry. |
+| Does `sbx kit add` change what later starts run? | **No.** It runs the kit's startup commands once against the running container and records metadata, but the durable dispatcher entry written at creation is left as it was: a sandbox created with command `A` and re-added with `B` ran `B` once, then `A` on the next start, with `/etc/durable-startup.d/…/000-cmd.sh` still holding `A`. Re-applying therefore also cannot duplicate entries. |
 | Are git-ignored host files reachable from a clone-mode sandbox? | Yes — `/run/sandbox/source` is the host working tree, read-only, ignored files included. |
 
 ## What changed
@@ -95,10 +95,12 @@ schema is *not* the one on docs.docker.com — see Decisions):
   `Sandbox Console` channel (FR-055) and, on a `fail … exit=<n>` line, shows a warning
   naming the sandbox with **Show Log** / **Open Shell**. This is the only signal that exists:
   the start itself succeeds and the remaining hooks are skipped.
-- **Changed hooks are applied without a Rebuild.** Because a same-named kit replaces its
-  dispatcher entry, `sbx kit add` re-applies edited hooks to an existing sandbox. The form's
-  Save offers it the way image/mount changes offer a Rebuild, and the Explorer exposes it
-  per node; recreating the sandbox is never required just to change a command.
+- **A changed hook list is a Rebuild; running the new commands now is a separate action.**
+  The start-up list is bound when the sandbox is created, so the form's Save asks for a
+  Rebuild for a hook change exactly as it does for image/mount, and says why. **Run Hooks
+  Now** (Explorer) is the non-destructive companion: it runs the recipe's current
+  `startup`/`services` once in an existing sandbox — useful after a host-side `git pull` or
+  a script edit — and states in its completion message that later starts are unchanged.
 - **The repo carries a working demo of its own feature.** `.sandbox/config.yaml` (committed
   for the first time here, per FR-009's own model) gains a `hooks-demo` clone-mode sandbox
   whose commands exist to be read: `setup` records that the workspace does not exist yet,

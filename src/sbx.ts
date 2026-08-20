@@ -476,10 +476,14 @@ export async function kitValidate(
 }
 
 /**
- * Apply a kit to an existing sandbox (FR-060) — the way changed hooks reach a sandbox that
- * already exists, since `--kit` is create-only. Verified on v0.31.3: re-adding a kit under
- * the SAME name runs its startup commands once and replaces that kit's dispatcher entry, so
- * hooks are not stacked into duplicates by repeated applies.
+ * Apply a kit to a sandbox that already exists (FR-060) — it runs the kit's startup
+ * commands against the running container **once**.
+ *
+ * It is not a substitute for `--kit` (which is create-only). Verified on v0.31.3: a sandbox
+ * created with startup command `A` and re-added with `B` runs `B` once and then `A` on every
+ * later start — the durable dispatcher entry from creation is left untouched, which is also
+ * why repeated applies cannot stack duplicates. Callers must not describe this as changing
+ * what the sandbox does at start-up; `ops.runHooksNow` says so in its completion message.
  */
 export async function kitAdd(
   name: string,

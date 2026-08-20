@@ -266,8 +266,8 @@ Stopping must preserve:
   Every rebuild starts from the freshest obtainable image (FR-053); the build streams
   into the progress box and can be cancelled from it (FR-055/FR-056).
 * **Edit** — add/rotate secrets and published ports on a **running** sandbox
-  (non-destructive, no recreate). Kit injection (`sbx kit add`) is a planned follow-up
-  (Architecture §7).
+  (non-destructive, no recreate). Changed lifecycle hooks are *not* in this group: like
+  image and mount, they are bound at creation, so they ask for a recreate (FR-060).
 
 ## FR-008 Custom Environment (preinstalled tooling)
 
@@ -614,6 +614,13 @@ once in the recipe instead of typed into a terminal after every start.
   `$SANDBOX_SOURCE` is what makes a clone usable for repositories whose work needs files git
   does not carry — `.env.local`, generated configuration, data directories — without the
   extension ever writing into the user's working tree.
+  **What a hook may write to follows the mount, not the hook.** Under `mount: clone` the
+  workspace is the sandbox's private copy and `$SANDBOX_SOURCE` is read-only, so a hook
+  cannot touch the host tree at all. Under `mount: direct` the workspace **is** the host
+  tree: a hook that installs dependencies there writes into the user's checkout, with Linux
+  artefacts in a directory the host may also use (`node_modules` built inside the sandbox is
+  the classic case). That is the mount mode's nature, not a hook-specific rule — but it is
+  the reason dependency installs usually belong to a `clone` sandbox.
 * **The user maintains commands, not machinery.** The hooks are carried into the sandbox as
   a generated `sbx` **kit** under `.sandbox/kits/<key>/`, which is gitignored, regenerated
   from the recipe, and never hand-edited. A command that invokes a committed script
@@ -625,11 +632,22 @@ once in the recipe instead of typed into a terminal after every start.
   hooks after it are skipped — so the extension reads the sandbox's own startup log into the
   operation log (FR-055) and raises a warning naming the sandbox, with **Show Log** and
   **Open Shell**.
-* **Changing hooks does not cost a Rebuild.** They are baked in at creation, so an edited
-  list is pushed to an existing sandbox by re-applying its kit: the Edit form offers it on
-  Save, and **Apply Hooks** on the Explorer node does it for a recipe edited by hand.
-  Applying starts a stopped sandbox (the commands run immediately). Removing hooks from a
-  sandbox that already has them needs a Rebuild — sbx cannot detach a kit.
+* **A changed hook list takes effect on a Rebuild; the new commands can be run now.** What a
+  sandbox does at every start is fixed when it is created, so editing the recipe does not
+  change an existing sandbox — the Edit form asks for a **Rebuild** (recreate) for a hook
+  change exactly as it does for image/mount, and says why.
+  **Run Hooks Now** (Explorer node) is the separate, non-destructive action: it runs the
+  recipe's current `startup`/`services` commands **once** in the existing sandbox, so a
+  workspace can be brought up to date — after a `git pull` on the host, or after editing the
+  script a hook calls — without recreating anything and without retyping them in a shell.
+  It does **not** change what later starts run, and says so when it finishes. `setup` is
+  never re-run by it: that phase belongs to creation. A stopped sandbox is started to run
+  the commands; a sandbox that does not exist yet is left to Connect.
+  Hooks deleted from the recipe likewise stay in an existing sandbox until a Rebuild — sbx
+  has no command that detaches a kit.
+  * The pointer pattern above is what makes this rare: a hook that calls a committed script
+    re-reads that script on every start, so the *list* changes far less often than the work
+    it does.
 * The generated project CLI (FR-052) renders the same kit and passes it on create, so a
   sandbox created from an external shell gets the same hooks.
 * **Credentials a hook needs are asked for before the create.** Hooks run *inside*
@@ -736,7 +754,7 @@ Refresh
 ```
 
 Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
-`Rebuild`, `Apply Hooks` (FR-060), `Edit`, `Delete instance`, `Remove from config`.
+`Rebuild`, `Run Hooks Now` (FR-060), `Edit`, `Delete instance`, `Remove from config`.
 
 There is no separate Start/Restart/Delete palette command.
 

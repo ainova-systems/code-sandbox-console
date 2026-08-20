@@ -683,20 +683,26 @@ export function removeHooks(root: vscode.Uri, key: string): Promise<void> {
 }
 
 /**
- * FR-060: push edited hooks into a sandbox that already exists. `--kit` is create-only, so
- * this is `sbx kit add`, which re-runs the kit's startup commands once and — because the
- * kit carries the sandbox's own name — replaces its dispatcher entry instead of stacking a
- * duplicate. That is what keeps a changed command from costing a Rebuild.
+ * FR-060: run this sandbox's current `startup`/`services` commands **now**, in a sandbox
+ * that already exists — the way to bring a running workspace up to date without a Rebuild
+ * and without retyping the commands in a shell.
  *
- * Two honest limits, both surfaced rather than worked around: applying to a **stopped**
- * sandbox starts it (verified — `kit add` boots the VM to run the commands), and hooks
- * cannot be *removed* from a live sandbox, because sbx has no command that detaches a kit.
+ * What it deliberately does NOT do is change what later starts run. Verified on v0.31.3:
+ * `sbx kit add` executes the kit's startup commands once and records metadata, but leaves
+ * the durable dispatcher entry written at creation untouched — a sandbox created with
+ * command A and re-applied with command B runs B once and then A on every later start. The
+ * persistent list is fixed when the sandbox is created (`--kit` is create-only), so a
+ * changed list needs a Rebuild; that is what the Edit form offers.
+ *
+ * Two further limits, surfaced rather than worked around: running against a **stopped**
+ * sandbox starts it (`kit add` boots the VM to run the commands), and hooks cannot be
+ * removed from a live sandbox at all — sbx has no command that detaches a kit.
  */
-export async function applyHooksRef(
+export async function runHooksNow(
   root: vscode.Uri,
   ref: sandbox.SandboxRef
 ): Promise<void> {
-  await exclusive(ref.name, "Apply hooks", async () => {
+  await exclusive(ref.name, "Run hooks", async () => {
     const workspace = sandbox.workspacePath();
     if (!workspace) {
       throw new Error("No workspace open.");
@@ -721,11 +727,14 @@ export async function applyHooksRef(
     // No startup-log poll afterwards: `kit add` runs the commands itself and prints them
     // (its output streams into the log through the operation context, FR-055) instead of
     // going through the boot dispatcher, so there is no new dispatcher block to read.
-    await withProgress(`Applying hooks to ${ref.name}…`, (ctx) =>
+    await withProgress(`Running hooks in ${ref.name}…`, (ctx) =>
       sbx.kitAdd(ref.name, kit, ctx)
     );
+    // Say what just happened AND what did not: the sandbox is up to date now, but its
+    // start-up list is still the one it was created with (see the note above).
     void vscode.window.showInformationMessage(
-      `Hooks applied to ${ref.name}.`
+      `Ran the startup hooks in ${ref.name}. Later starts still run the list this sandbox ` +
+        "was created with — Rebuild to change that."
     );
   });
 }

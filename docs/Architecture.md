@@ -119,7 +119,7 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 | Open Shell | `Shell` | `sbx exec -it -w /<drive>/… <name> bash` (auto-starts, lands in workspace) |
 | Discovery (FR-002) | on activation | `sbx ls --json` → match by name |
 | Rebuild/Delete (FR-007) | `Rebuild` (palette + Explorer) / `Delete instance` (Explorer, §12) | `sbx rm --force <name>` (+ image rebuild, §11) |
-| Apply hooks (FR-060) | `Apply Hooks` (Explorer) / offered by the Edit form on Save | `sbx kit add <name> <dir>` — `--kit` is create-only, so this is how an edited hook list reaches an existing sandbox |
+| Run hooks now (FR-060) | `Run Hooks Now` (Explorer) | `sbx kit add <name> <dir>` — runs the recipe's current `startup`/`services` once in an existing sandbox. It does **not** change what later starts run (§7); a changed list needs a Rebuild, which the Edit form asks for |
 
 The UI labels the attach action **Connect** (the underlying sbx operation is still an
 attach via `sbx run`). Create-vs-attach is disambiguated by checking `sbx ls --json`
@@ -205,10 +205,11 @@ sandboxes:
     default: true             # optional: status bar / palette target (FR-050; one per recipe)
     image: myrepo-dev:latest  # optional: image tag to run with (-t)
     dockerfile: Dockerfile    # optional: path under .sandbox/; if set → build `image` from it
-    mount: direct             # optional: direct | clone (FS policy; default direct)
-    setup:                    # optional: FR-060 hooks — once, at creation (sh)
-      - npm ci
+    mount: clone              # optional: direct | clone (FS policy; default direct)
+    setup:                    # optional: FR-060 hooks — once, at creation (sh; no workspace
+      - docker pull redis:7   #   yet under mount: clone — see §7)
     startup:                  # optional: every start, before the agent attaches (bash -lc)
+      - npm ci                #   under mount: direct this writes into the HOST checkout
       - bash $SANDBOX_SOURCE/.sandbox/sync.sh
     services:                 # optional: every start, in the background
       - docker compose -f deployment/docker-compose.yml up -d
@@ -321,13 +322,21 @@ anyway, and the only trace is `/var/log/sbx-kit-startup.log` (`fail <script> exi
 which `ops.ts` reads back and reports. `environment.variables` reach install commands,
 startup commands and the agent's own shell.
 
-**The kit is frozen at creation**, and `--kit` against an existing sandbox is refused
-(*"can only be used when creating a new sandbox"*). Two consequences shape the design:
-hook commands are written as thin pointers to committed scripts, so editing a script needs
-nothing else; and changing the command *list* re-applies the kit with `sbx kit add`, which
-runs the commands once and — because the kit carries the sandbox's own name — **replaces**
-that kit's dispatcher entry rather than stacking a duplicate. Applying to a stopped sandbox
-starts it. Nothing detaches a kit: removing hooks needs a Rebuild.
+**The kit is frozen at creation.** `--kit` against an existing sandbox is refused (*"can
+only be used when creating a new sandbox"*), and `sbx kit add` does **not** substitute for
+it: verified on v0.31.3 by creating a sandbox whose startup command printed `VERSION-A`,
+re-adding the same-named kit carrying `VERSION-B`, and restarting — `B` ran once, then `A`
+ran again, and `/etc/durable-startup.d/002-startup-<kit>/000-cmd.sh` still held `A`. So
+`kit add` applies a kit to the *running container* (files, init files, startup commands) and
+records metadata; the durable entry written at creation stays as it was.
+
+Two consequences shape the design. Hook commands are written as thin **pointers to committed
+scripts**, so the work a hook does changes with the script, with nothing to re-apply — that
+is what keeps the frozen list from mattering most of the time. And changing the *list*
+itself is a **Rebuild**, which the Edit form asks for alongside image/mount changes.
+`Run Hooks Now` is the separate, non-destructive action built on `kit add`: run the current
+commands once in an existing sandbox (a stopped one is started to do it), announced as
+exactly that. Nothing detaches a kit, so removing hooks also needs a Rebuild.
 
 **Third-party kits are not wired up yet.** `--kit` also accepts ZIP, git and OCI references
 and they stack, which is the natural follow-up for reusable team kits (MCP servers, CA
@@ -357,10 +366,11 @@ fallback), so the form tracks the local version.
 
 **Save = persist + apply.** The definition is written to `.sandbox/config.yaml` AND
 applied to the instance: secrets (`secret set`, FR-032) and ports (`sbx ports`) apply
-**live**; changed startup hooks offer **Apply Hooks** (`sbx kit add`, above); image/mount
-changes prompt a **Rebuild** (recreate; workspace on the mount preserved). A changed
-`setup` list is not applied to an existing sandbox at all — install is a creation-time
-phase — and the form says so instead of pretending otherwise. A just-generated Dockerfile is **not** auto-built (it carries only the agent
+**live**; image, mount **and hook** changes prompt a **Rebuild** (recreate; workspace on the
+mount preserved), because all three are bound when the sandbox is created. The prompt names
+which of them changed, and a hook change carries the reason — a text edit that costs a
+recreate needs one, with `Run Hooks Now` named as the non-destructive alternative.
+Declining the rebuild still confirms the save: the recipe on disk changed either way. A just-generated Dockerfile is **not** auto-built (it carries only the agent
 base, no tooling yet) — the user edits it, then Rebuild/Connect builds it. An edit
 round-trip preserves fields the form does not expose (e.g. `context`), keeps the
 committed secret requirements regardless of what is satisfied on this machine, and a
@@ -541,8 +551,8 @@ instance) → absent → Remove from config:
 
 | State | Inline actions |
 |---|---|
-| running | Stop · Connect · *(Shell, Apply Hooks in the context menu)* |
-| stopped | Connect · Edit · Delete instance · *(Rebuild, Apply Hooks in the context menu)* |
+| running | Stop · Connect · *(Shell, Run Hooks Now in the context menu)* |
+| stopped | Connect · Edit · Delete instance · *(Rebuild, Run Hooks Now in the context menu)* |
 | absent (defined, no instance) | Connect (creates the instance) · Edit · Remove from config |
 | busy (transient — an operation is in flight, FR-054) | none |
 
@@ -550,9 +560,11 @@ Two distinct deletes: **Delete instance** (`sbx rm`, keeps the recipe — recrea
 shown when stopped; runs **before** the recipe entry is touched) vs **Remove from
 config** (destroys any live instance first, then drops the entry from `config.yaml`,
 deleting the file if it was the last, and removes the sandbox's generated hook kit).
-**Apply Hooks** (FR-060) sits on both existing states because `config.yaml` is a file
-people edit by hand — a hook changed there has no form Save to hang the offer off. A malformed `config.yaml` renders as a single
-error node that opens the file — never as an empty "No sandboxes yet" tree.
+**Run Hooks Now** (FR-060) sits on both existing states: it runs the recipe's current
+`startup`/`services` once, which is as useful after a host-side `git pull` as after an edit,
+and `config.yaml` is a file people edit by hand with no form Save to hang it off. A
+malformed `config.yaml` renders as a single error node that opens the file — never as an
+empty "No sandboxes yet" tree.
 
 **Every slow lifecycle action surfaces a progress notification.** Create, Stop, Delete
 instance, and Recreate each run their `sbx` call (and the preceding terminal disposal,

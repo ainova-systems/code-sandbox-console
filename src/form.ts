@@ -381,10 +381,19 @@ async function apply(
     info("Saved. Create it from the Sandboxes view (Connect).");
     return;
   }
+  // FR-060: hooks belong here with image/mount, not with the live-applied fields. sbx binds
+  // the start-up list when the sandbox is created (`--kit` is create-only) and `kit add`
+  // only re-runs commands — verified: it leaves the durable entry alone — so a changed list
+  // takes effect on later starts only after a recreate.
+  const hooksChanged =
+    !sameHooks(oldSpec?.setup, spec.setup) ||
+    !sameHooks(oldSpec?.startup, spec.startup) ||
+    !sameHooks(oldSpec?.services, spec.services);
   const envChanged =
     oldSpec?.image !== spec.image ||
     oldSpec?.dockerfile !== spec.dockerfile ||
-    (oldSpec?.mount ?? "direct") !== spec.mount;
+    (oldSpec?.mount ?? "direct") !== spec.mount ||
+    hooksChanged;
   if (envChanged) {
     if (generatedDockerfile) {
       info(
@@ -392,42 +401,41 @@ async function apply(
       );
       return;
     }
+    const what = [
+      oldSpec?.image !== spec.image || oldSpec?.dockerfile !== spec.dockerfile
+        ? "image"
+        : undefined,
+      (oldSpec?.mount ?? "direct") !== spec.mount ? "mount" : undefined,
+      hooksChanged ? "hook" : undefined,
+    ]
+      .filter(Boolean)
+      .join("/");
     const choice = await vscode.window.showWarningMessage(
-      `Apply image/mount changes to ${ref.name}? This rebuilds (recreates) the sandbox; the workspace on the host mount is preserved.`,
-      { modal: true },
+      `Apply ${what} changes to ${ref.name}? This rebuilds (recreates) the sandbox; the workspace on the host mount is preserved.`,
+      {
+        modal: true,
+        // Say why a hook edit costs a recreate — it looks like a text change, and the
+        // Explorer's "Run Hooks Now" nearby does something similar but not the same.
+        detail: hooksChanged
+          ? "Lifecycle hooks are attached when a sandbox is created, so a changed list reaches later starts only through a recreate. Run Hooks Now (in the Sandboxes view) runs the new commands once in the existing sandbox instead, without recreating it."
+          : undefined,
+      },
       "Rebuild"
     );
     if (choice === "Rebuild") {
       await ops.rebuildRef(root, ref); // also publishes ports once running
+      return;
     }
+    // Declining the rebuild does not undo the save — say so, or a dismissed dialog reads
+    // as "Save did nothing" while the recipe on disk has already changed.
+    info(
+      `Saved to .sandbox/config.yaml. ${ref.name} keeps running as created — Rebuild it when you want the ${what} change applied.`
+    );
     return;
   }
-  // Secrets/ports apply live.
+  // Only secrets/ports changed → apply live.
   await secrets.ensureSecrets(ref);
   await publishPortsSafe(ref.name, spec.ports);
-  // FR-060: hooks are baked into the sandbox at creation, so an edited list reaches an
-  // existing sandbox only by re-applying its kit — which is cheap, unlike the Rebuild an
-  // image/mount change needs, so it is offered rather than demanded.
-  const startupChanged =
-    !sameHooks(oldSpec?.startup, spec.startup) ||
-    !sameHooks(oldSpec?.services, spec.services);
-  if (startupChanged) {
-    const choice = await vscode.window.showInformationMessage(
-      `Apply the changed startup hooks to ${ref.name} now? They run immediately, and a stopped sandbox is started to run them.`,
-      "Apply Hooks"
-    );
-    if (choice === "Apply Hooks") {
-      await ops.applyHooksRef(root, ref);
-    }
-    return;
-  }
-  if (!sameHooks(oldSpec?.setup, spec.setup)) {
-    // Nothing to apply: install commands are a creation-time phase by definition.
-    info(
-      `Applied changes to ${ref.name}. Setup hooks run once when a sandbox is created — Rebuild ${ref.name} to run the new ones.`
-    );
-    return;
-  }
   info(`Applied changes to ${ref.name}.`);
 }
 

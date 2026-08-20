@@ -135,8 +135,8 @@
         "icon": "$(tools)"
       },
       {
-        "command": "sandboxConsole.item.applyHooks",
-        "title": "Apply Hooks",
+        "command": "sandboxConsole.item.runHooks",
+        "title": "Run Hooks Now",
         "category": "Sandbox",
         "icon": "$(run-all)"
       },
@@ -192,7 +192,7 @@
           "when": "false"
         },
         {
-          "command": "sandboxConsole.item.applyHooks",
+          "command": "sandboxConsole.item.runHooks",
           "when": "false"
         },
         {
@@ -277,7 +277,7 @@
           "group": "2_config@2"
         },
         {
-          "command": "sandboxConsole.item.applyHooks",
+          "command": "sandboxConsole.item.runHooks",
           "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\.(running|stopped)$/",
           "group": "2_config@3"
         },
