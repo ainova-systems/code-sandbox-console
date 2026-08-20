@@ -315,6 +315,36 @@ async function prepareHooks(
 
 /** How long to wait for the startup dispatcher to finish before giving up on reporting. */
 const STARTUP_REPORT_MS = 90_000;
+/** After this long with no hook log at all, the sandbox has no bootstrap (see below). */
+const NO_BOOTSTRAP_MS = 20_000;
+
+/**
+ * FR-060: the sandbox is running its hooks-free past. A kit can only be attached at
+ * creation, so a sandbox created before its recipe declared any hook has no bootstrap and
+ * cannot gain one by restarting — the one exception to "edit, restart, applied", and the
+ * only case where a Rebuild is the answer for a `startup` change.
+ */
+async function reportMissingBootstrap(
+  root: vscode.Uri,
+  ref: sandbox.SandboxRef
+): Promise<void> {
+  log.block(
+    `startup hooks — ${ref.name}`,
+    "This sandbox was created before it declared any lifecycle hook, so it carries no hook " +
+      "bootstrap. sbx can only attach one while a sandbox is created (`--kit` is " +
+      "create-only), which is why a Rebuild is needed here."
+  );
+  const choice = await vscode.window.showWarningMessage(
+    `${ref.name} was created without lifecycle hooks, so the ones in the recipe did not run. Rebuild it once to attach them — after that, edits apply on a restart.`,
+    "Rebuild",
+    "Show Log"
+  );
+  if (choice === "Rebuild") {
+    await rebuildRef(root, ref);
+  } else if (choice === "Show Log") {
+    log.show();
+  }
+}
 
 /**
  * FR-060: say what the startup hooks did. Call with `void` after a start.
@@ -345,6 +375,13 @@ export async function reportStartupHooks(
   const deadline = Date.now() + STARTUP_REPORT_MS;
   let text: string | undefined;
   let failed = false;
+  // Whether the runner's log ever appeared. It is truncated as the runner's very first act,
+  // so a running sandbox that still has no log after a few polls does not have a bootstrap —
+  // it was created before these hooks were declared, and a kit cannot be attached to an
+  // existing sandbox. That is the one case where "edit, restart, applied" does not hold, and
+  // it is worth saying out loud rather than leaving the user waiting for hooks that will
+  // never run.
+  let sawLog = false;
   while (Date.now() < deadline && !text) {
     let running = false;
     try {
@@ -361,9 +398,15 @@ export async function reportStartupHooks(
         .catch(() => undefined);
       // The runner truncates its log at the top of every run, so whatever is in it belongs
       // to this start and nothing older — no dating, no baselines (spec 018).
-      if (hooks && /^=== hooks end/m.test(hooks)) {
-        text = hooks.trim();
-        failed = /^fail /m.test(hooks);
+      if (hooks !== undefined) {
+        sawLog = true;
+        if (/^=== hooks end/m.test(hooks)) {
+          text = hooks.trim();
+          failed = /^fail /m.test(hooks);
+        }
+      } else if (Date.now() - startedAt > NO_BOOTSTRAP_MS) {
+        await reportMissingBootstrap(root, ref);
+        return;
       }
     }
     if (!text) {
@@ -371,9 +414,10 @@ export async function reportStartupHooks(
     }
   }
   if (!text) {
-    // The runner never finished. The usual cause is the bootstrap failing before it — a
-    // missing runner script — which only sbx's own dispatcher log records.
-    const boot = await bootstrapFailure(ref, startedAt);
+    // The runner never finished. With a log present it is still working (or was killed
+    // mid-run); with none at all the bootstrap failed before it — a missing runner script —
+    // which only sbx's own dispatcher log records.
+    const boot = sawLog ? undefined : await bootstrapFailure(ref, startedAt);
     if (!boot) {
       return; // still running after the deadline, or nothing to report
     }
@@ -403,9 +447,10 @@ export async function reportStartupHooks(
  * succeeded adds nothing the runner's own log would not have said better.
  *
  * The file accumulates one block per start and cannot be read before the start, so a block
- * counts as this start's only when it is stamped at or after it, or when it differs from the
- * block that was already there. When neither holds, this reports nothing: silence beats
- * crediting a previous start's failure to the run the user is watching.
+ * counts as this start's only when its own timestamp says so. Anything older — or a header
+ * this cannot date — reports nothing: silence beats crediting a previous start's failure to
+ * the run the user is watching, and the runner's log (which is truncated per run) is the
+ * path that carries the detail anyway.
  */
 async function bootstrapFailure(
   ref: sandbox.SandboxRef,

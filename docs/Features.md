@@ -639,10 +639,15 @@ once in the recipe instead of typed into a terminal after every start.
 * **Edit, restart, applied.** A changed `startup`/`services` list takes effect the next time
   the sandbox starts — Stop, then Connect. Nothing else to press, no recreate, and the same
   is true for a recipe that arrived with a `git pull`: what runs is what the recipe said at
-  the last start. Removing hooks works the same way.
-  **`setup` is the exception**, and the only one: it is the install phase that runs while the
-  sandbox is being created, so a changed `setup` list is applied by creating the sandbox
-  again — the Edit form asks for a **Rebuild** and says why.
+  the last start. **Removing** hooks works the same way — an emptied list stops running at
+  the next start rather than lingering.
+  Two exceptions, both stated where they bite:
+  * **`setup`** is the install phase that runs while the sandbox is being created, so a
+    changed `setup` list is applied by creating the sandbox again — the Edit form asks for a
+    **Rebuild** and says why.
+  * A sandbox **created before its recipe declared any hook** cannot pick them up on a
+    restart: sbx attaches the mechanism at creation only. Rather than let the hooks silently
+    never run, the extension detects it at the next start and offers a one-time **Rebuild**.
 * The generated project CLI (FR-052) renders the same kit and passes it on create, so a
   sandbox created from an external shell gets the same hooks.
 * **Credentials a hook needs are asked for before the create.** Hooks run *inside*

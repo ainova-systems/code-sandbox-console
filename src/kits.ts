@@ -137,15 +137,16 @@ export function renderKit(opts: {
   if (install.length > 0) {
     commands.install = install;
   }
-  if (spec.startup.length > 0 || spec.services.length > 0) {
-    commands.startup = [
-      {
-        command: bootstrapCommand(spec.key),
-        user: AGENT_UID,
-        description: `lifecycle hooks — ${spec.key}`,
-      },
-    ];
-  }
+  // The bootstrap goes in whenever the sandbox gets a kit at all — even for a setup-only
+  // recipe, whose runner is a no-op today. It is what a later `startup:` entry needs in
+  // order to apply on a restart, and it cannot be added afterwards (`--kit` is create-only).
+  commands.startup = [
+    {
+      command: bootstrapCommand(spec.key),
+      user: AGENT_UID,
+      description: `lifecycle hooks — ${spec.key}`,
+    },
+  ];
   return stringify(
     {
       schemaVersion: "1",
@@ -297,21 +298,35 @@ export async function ensureKit(
   root: vscode.Uri,
   opts: { spec: SandboxSpec; sandboxName: string; workspaceInside: string }
 ): Promise<string | undefined> {
+  const dir = kitDirUri(root, opts.spec.key);
+  const runner = vscode.Uri.joinPath(dir, "startup.sh");
   if (!hasHooks(opts.spec)) {
+    // Nothing to attach — but a sandbox created earlier still carries a bootstrap that runs
+    // this file, so leaving yesterday's runner in place would keep yesterday's hooks running
+    // forever. Removing hooks from the recipe has to actually remove them, so the runner is
+    // rewritten as a no-op instead (deleting it would make every start fail "missing").
+    try {
+      await vscode.workspace.fs.stat(runner);
+      await vscode.workspace.fs.writeFile(
+        runner,
+        Buffer.from(renderRunner({ ...opts.spec, startup: [], services: [] }), "utf8")
+      );
+    } catch {
+      // no runner was ever generated for this sandbox — nothing to neutralise
+    }
     return undefined;
   }
-  const dir = kitDirUri(root, opts.spec.key);
   await vscode.workspace.fs.createDirectory(dir);
   await vscode.workspace.fs.writeFile(
     vscode.Uri.joinPath(dir, "spec.yaml"),
     Buffer.from(renderKit(opts), "utf8")
   );
-  if (opts.spec.startup.length > 0 || opts.spec.services.length > 0) {
-    await vscode.workspace.fs.writeFile(
-      vscode.Uri.joinPath(dir, "startup.sh"),
-      Buffer.from(renderRunner(opts.spec), "utf8")
-    );
-  }
+  // Written unconditionally, including for a setup-only recipe: the bootstrap (if this
+  // sandbox has one) calls it on every start, so it must always describe the CURRENT recipe.
+  await vscode.workspace.fs.writeFile(
+    runner,
+    Buffer.from(renderRunner(opts.spec), "utf8")
+  );
   await ensureIgnored(root);
   return dir.fsPath;
 }

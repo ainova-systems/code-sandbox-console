@@ -347,11 +347,23 @@ one sentence: *edit, restart, applied*. `setup` stays baked in as `commands.inst
 re-running the install phase is what a Rebuild is, and the form says so.
 
 The runner reproduces the dispatcher semantics users were told about: commands in order, a
-failure stops the rest and is recorded with its exit code, services detached. It writes
-`/tmp/sandbox-console-hooks.log`, **truncated at the top of every run**, which is what lets
-`ops.reportStartupHooks` read it without dating anything; sbx's own dispatcher log stays as
-the fallback that catches a bootstrap failure. Nothing detaches a kit, but nothing needs to:
-an empty hook list produces a runner that does nothing.
+failure stops the rest and is recorded with its exit code, services detached (and a service
+that is gone a second later is recorded as `fail … exited immediately`, never as *started*).
+It writes `/tmp/sandbox-console-hooks.log`, **truncated at the top of every run**, which is
+what lets `ops.reportStartupHooks` read it without dating anything; sbx's own dispatcher log
+stays as the fallback that catches a bootstrap failure.
+
+Two consequences of the bootstrap being frozen, both handled rather than documented away:
+
+- **Removing hooks must remove them.** An emptied recipe still faces a bootstrap that runs
+  the runner, so `ensureKit` rewrites an existing runner as a no-op instead of leaving
+  yesterday's commands on disk (deleting it would make every start fail *missing*).
+- **A sandbox created with no hooks at all has no bootstrap**, and one cannot be attached
+  afterwards. The bootstrap is therefore emitted whenever a sandbox gets a kit — including a
+  setup-only recipe, whose runner is a no-op today — and for the remaining case (hooks added
+  to a sandbox created without any) `ops.reportStartupHooks` notices that the runner's log
+  never appeared and offers a one-time **Rebuild**, instead of leaving the user waiting for
+  hooks that cannot run.
 
 **Third-party kits are not wired up yet.** `--kit` also accepts ZIP, git and OCI references
 and they stack, which is the natural follow-up for reusable team kits (MCP servers, CA

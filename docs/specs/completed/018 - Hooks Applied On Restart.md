@@ -63,6 +63,14 @@ re-running it is what a Rebuild is for.
   is gone a second later is reported as `fail … exited immediately` with its output quoted
   into the main log — it does not stop the remaining hooks, but it is never called *started*,
   and the run's end marker says how many failed to come up.
+- **Removing hooks removes them.** An emptied `startup`/`services` list rewrites the runner
+  as a no-op rather than leaving it on disk, since the bootstrap baked into the sandbox would
+  otherwise keep executing the previous recipe forever. The generated CLI does the same.
+- **The bootstrap is attached whenever a sandbox gets a kit**, including a setup-only recipe:
+  it cannot be added afterwards, and it is what a `startup` entry added later needs. For the
+  one case left — hooks added to a sandbox created with none — the start-up report notices
+  that the runner's log never appeared and offers a one-time **Rebuild**, rather than letting
+  the hooks silently never run.
 - **A missing runner script fails loudly.** The bootstrap refuses with a message naming the
   file and the fix (Connect from VS Code, or `sbx.sh connect`, regenerates it) instead of
   silently starting a sandbox with no hooks — the kit directory is a gitignored artefact, so
