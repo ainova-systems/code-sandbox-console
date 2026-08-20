@@ -206,8 +206,19 @@ export function renderRunner(spec: SandboxSpec): string {
     "  else",
     '    nohup bash -lc "$2" > "$3" 2>&1 < /dev/null &',
     "  fi",
-    '  say "started $1 (output: $3)"',
+    "  pid=$!",
+    "  # A service that dies on the spot must not be reported as running: give it a moment,",
+    "  # then say so with the output that explains why. It does not stop the remaining hooks.",
+    "  sleep 1",
+    '  if kill -0 "$pid" 2>/dev/null; then',
+    '    say "started $1 pid=$pid (output: $3)"',
+    "  else",
+    '    say "fail $1 exited immediately"',
+    '    sed "s/^/    | /" "$3" >> "$LOG" 2>/dev/null',
+    "    dead=$((dead + 1))",
+    "  fi",
     "}",
+    "dead=0",
     "",
     `say "=== hooks begin ${spec.key}"`,
   ];
@@ -221,7 +232,12 @@ export function renderRunner(spec: SandboxSpec): string {
       }.log'`
     )
   );
-  lines.push('say "=== hooks end ok"', "");
+  // The end marker is what tells `ops.reportStartupHooks` the run is over; it must not read
+  // as a clean bill of health when a service died on the spot.
+  lines.push(
+    'if [ "$dead" -gt 0 ]; then say "=== hooks end ok, $dead service(s) failed to start"; else say "=== hooks end ok"; fi',
+    ""
+  );
   return lines.join("\n");
 }
 

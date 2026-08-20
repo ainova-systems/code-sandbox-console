@@ -413,7 +413,8 @@ write_kit() {
       printf 'LOG=/tmp/sandbox-console-hooks.log\\n: > "$LOG"\\n'
       printf 'say() { printf %s "$*" >> "$LOG"; }\\n' "'%s\\\\n'"
       printf 'run() {\\n  if bash -lc "$2" >> "$LOG" 2>&1; then\\n    say "ok $1"\\n  else\\n    code=$?\\n    say "fail $1 exit=$code"\\n    say "=== hooks end failed"\\n    exit "$code"\\n  fi\\n}\\n'
-      printf 'service() {\\n  if command -v setsid >/dev/null 2>&1; then\\n    setsid bash -lc "$2" > "$3" 2>&1 < /dev/null &\\n  else\\n    nohup bash -lc "$2" > "$3" 2>&1 < /dev/null &\\n  fi\\n  say "started $1 (output: $3)"\\n}\\n'
+      printf 'service() {\\n  if command -v setsid >/dev/null 2>&1; then\\n    setsid bash -lc "$2" > "$3" 2>&1 < /dev/null &\\n  else\\n    nohup bash -lc "$2" > "$3" 2>&1 < /dev/null &\\n  fi\\n  pid=$!\\n  sleep 1\\n  if kill -0 "$pid" 2>/dev/null; then\\n    say "started $1 pid=$pid (output: $3)"\\n  else\\n    say "fail $1 exited immediately"\\n    sed "s/^/    | /" "$3" >> "$LOG" 2>/dev/null\\n    dead=$((dead + 1))\\n  fi\\n}\\n'
+      printf 'dead=0\\n'
       printf 'say "=== hooks begin %s"\\n' "$key"
       i=0; cfg_list "$key" startup | while IFS= read -r c; do
         i=$((i + 1)); printf "run 'startup[%s]' %s\\n" "$i" "$(sh_q "$c")"
@@ -421,7 +422,7 @@ write_kit() {
       i=0; cfg_list "$key" services | while IFS= read -r c; do
         i=$((i + 1)); printf "service 'service[%s]' %s '/tmp/sandbox-console-service-%s.log'\\n" "$i" "$(sh_q "$c")" "$i"
       done
-      printf 'say "=== hooks end ok"\\n'
+      printf 'if [ "$dead" -gt 0 ]; then say "=== hooks end ok, $dead service(s) failed to start"; else say "=== hooks end ok"; fi\\n'
     } > "$dir/startup.sh"
   fi
   # Generated artefact, like the extension's: regenerated from the recipe, never committed.
