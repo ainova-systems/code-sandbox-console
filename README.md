@@ -40,6 +40,11 @@ the sandbox, in your workspace.
   stdin to `sbx secret set` — never written to the repo, an image, or a shell history.
   Per-project values are cached (encrypted for your OS user) so a repo-scoped token is
   entered once, not per sandbox. For `github` the `gh` CLI is authenticated inside too.
+- **Lifecycle hooks** — per sandbox, declared once in the recipe: `setup` (at creation),
+  `startup` (every start, before the agent attaches) and `services` (every start, in the
+  background). Edit a list and restart — no recreate. Hooks see `$SANDBOX_WORKSPACE` and
+  `$SANDBOX_SOURCE`, so a sandbox on its own clone can be given the files git does not
+  carry, read-only, without writing into your checkout.
 - **Generated project CLI** — `.sandbox/scripts/sbx.sh` exposes the same sandbox model
   (status, connect, exec, headless tasks, ephemeral runners, secrets) to shells, scripts,
   and AI skills, so automation never has to re-encode the naming and lifecycle rules.
@@ -118,6 +123,13 @@ sandboxes:
     agent: shell
     image: myrepo-dotnet:latest
     dockerfile: dotnet.Dockerfile   # built and tagged as `image`
+  worker:
+    agent: shell
+    mount: clone
+    startup:                        # every start, before the agent attaches
+      - bash $SANDBOX_SOURCE/.sandbox/sync.sh
+    services:                       # every start, in the background
+      - docker compose up -d
 ```
 
 What the extension writes into your repository — only once you create your first sandbox,
@@ -129,6 +141,7 @@ never on merely opening a project:
 | `.sandbox/identity.yaml` | gitignored | a short random local id, so clones and worktrees never collide (sandbox name is `<name>-<key>-<id>`) |
 | `.sandbox/.gitignore` | committed | keeps the identity out of git |
 | `.sandbox/scripts/sbx.sh` | committed | the generated project CLI |
+| `.sandbox/kits/<key>/` | gitignored | generated lifecycle-hook artefacts, rewritten from the recipe before every start |
 
 ## How it works & security
 
