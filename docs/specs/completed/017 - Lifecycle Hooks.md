@@ -99,6 +99,15 @@ schema is *not* the one on docs.docker.com — see Decisions):
   dispatcher entry, `sbx kit add` re-applies edited hooks to an existing sandbox. The form's
   Save offers it the way image/mount changes offer a Rebuild, and the Explorer exposes it
   per node; recreating the sandbox is never required just to change a command.
+- **The repo carries a working demo of its own feature.** `.sandbox/config.yaml` (committed
+  for the first time here, per FR-009's own model) gains a `hooks-demo` clone-mode sandbox
+  whose commands exist to be read: `setup` records that the workspace does not exist yet,
+  `startup` copies a file the clone cannot contain out of the read-only host mount and
+  stamps both HEADs, `services` writes a heartbeat. The acceptance table that reads this
+  evidence lives in the `ext-run-local` skill, so accepting FR-060 is a procedure rather
+  than a memory. Deliberately one command per line: block scalars would parse in the
+  extension and not in the generated CLI, which would make the demo prove less than it
+  claims.
 - **The generated project CLI keeps parity (FR-052).** `.sandbox/scripts/sbx.sh` renders the
   same kit and passes `--kit` on create, so a sandbox created from an external shell gets
   the same hooks as one created from the Explorer.

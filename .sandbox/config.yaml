@@ -1,0 +1,30 @@
+version: 1
+name: code-sandbox-console
+sandboxes:
+  claude:
+    agent: claude
+    title: claude-clone
+    group: isolated
+    mount: clone
+  # FR-060 demo/acceptance sandbox. Connect it and read dist/ inside the sandbox — every
+  # line below leaves evidence of a property the feature promises (see the FR-060 block in
+  # .claude/skills/ext-run-local/SKILL.md for what to expect).
+  #
+  # Deliberately one command per line, no YAML block scalars: the generated CLI's recipe
+  # reader (.sandbox/scripts/sbx.sh, FR-052) handles plain and quoted scalars only, and this
+  # demo must produce the same sandbox whether it is created from VS Code or from a shell.
+  # dist/ is this repo's gitignored build output, so the evidence never dirties the clone.
+  hooks-demo:
+    agent: shell
+    title: hooks demo
+    group: demo
+    mount: clone
+    setup:
+      - printf 'setup_at=%s workspace_exists=%s source_readable=%s\n' "$(date -u +%FT%TZ)" "$(test -d "$SANDBOX_WORKSPACE" && echo yes || echo no)" "$(test -d "$SANDBOX_SOURCE/.git" && echo yes || echo no)" > /tmp/hooks-setup-evidence.txt
+    startup:
+      - mkdir -p "$SANDBOX_WORKSPACE/dist"
+      - cp "$SANDBOX_SOURCE/README.md" "$SANDBOX_WORKSPACE/dist/README.from-source.md"
+      - ls -1A "$SANDBOX_SOURCE" > "$SANDBOX_WORKSPACE/dist/source-top-level.txt"
+      - printf 'startup_at=%s source=%s workspace=%s source_head=%s workspace_head=%s\n' "$(date -u +%FT%TZ)" "$SANDBOX_SOURCE" "$SANDBOX_WORKSPACE" "$(git -C "$SANDBOX_SOURCE" rev-parse --short HEAD)" "$(git -C "$SANDBOX_WORKSPACE" rev-parse --short HEAD)" > "$SANDBOX_WORKSPACE/dist/startup-evidence.txt"
+    services:
+      - while true; do printf 'service_at=%s\n' "$(date -u +%FT%TZ)" >> "$SANDBOX_WORKSPACE/dist/service-heartbeat.log"; sleep 5; done
