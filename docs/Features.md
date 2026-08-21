@@ -473,9 +473,7 @@ by hand (see Architecture §8).
   (upstream [docker/sbx-releases#112](https://github.com/docker/sbx-releases/issues/112)).
   The form hides that checkbox when the agent is Cursor, Save drops it from the recipe,
   and Connect/Shell/Rebuild never prompt for it. GitHub and other secrets on a Cursor sandbox
-  stay available. A global Cursor key already in the keychain is **warned about, not
-  unset** — it may belong to another sandbox — before Connect, Shell, or Rebuild attaches
-  the agent.
+  stay available.
 
 ---
 

@@ -50,10 +50,6 @@ export const SECRET_CONFLICTS: SecretConflict[] = [
   },
 ];
 
-export function conflictsFor(agent: string): SecretConflict[] {
-  return SECRET_CONFLICTS.filter((c) => c.agent === agent);
-}
-
 export function isConflictingSecret(agent: string, service: string): boolean {
   return SECRET_CONFLICTS.some(
     (c) => c.agent === agent && c.service === service

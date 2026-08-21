@@ -72,7 +72,7 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
 | `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). Owns the host-Docker probe `dockerState()` — `docker --version` for *installed*, then `docker info` for *engine reachable*, since the client-only `--version` succeeds while the engine is stopped (FR-059) — and the one sentence both the build failure and the form's notice use. Executable resolved per call, like `sbx.ts`. |
 | `kits.ts` | Lifecycle hooks (FR-060, §7): renders the generated kit `.sandbox/kits/<key>/spec.yaml` **and** the runner `startup.sh` it bootstraps (both gitignored artefacts, rewritten before every start — spec 018), derives the `SANDBOX_*` variables that make a hook mount-agnostic, and turns a rejected kit into the user-facing refusal. Knows the kit schema and the runner's semantics; the `--kit` argv itself lives in `sbx.ts`. |
-| `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. Skips and warns on agent/secret pairs that cannot authenticate together (Cursor API key on Cursor). |
+| `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. Skips agent/secret pairs that cannot authenticate together (Cursor API key on Cursor). |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
 | `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell/open-logs, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054), cancellation at stage boundaries (FR-056) — §12 — and the mount preflight (FR-058, §5) whose modal refusal it shows itself, raising the shared `HandledError` so no surface reports it twice. Open Logs (FR-061) takes the same lock so Stop/Rebuild cannot land between the running check and `exec`; it still must not start a stopped sandbox. The snapshot file is owner-only (`0600`) when the OS honours modes. |
@@ -465,9 +465,7 @@ path is broken inside the sandbox ([docker/sbx-releases#112](https://github.com/
 `cursor-agent` still prompts to log in and the loop never completes, while the same sandbox
 signs in when no Cursor secret is set. The form therefore does not offer a `cursor` secret
 when the agent is `cursor`, Save drops it from that recipe, and Connect/Shell/Rebuild never prompt
-for it. GitHub and other secrets stay available. A global Cursor key already in the
-keychain is warned about, not unset — it may belong to another sandbox — before Connect,
-Shell, or Rebuild attaches the agent.
+for it. GitHub and other secrets stay available.
 
 ## 9. Security & isolation
 
@@ -732,7 +730,8 @@ re-encoding these rules as prose and calls subcommands instead
   injected sentinel, and the OAuth UI loops on `Press any key to log in…` (upstream
   [#112](https://github.com/docker/sbx-releases/issues/112)). The working path is
   interactive sign-in with **no** Cursor secret set. The form and provisioning refuse
-  that combination (FR-032); a global key already in the keychain is only warned about.
+  that combination (FR-032). A leftover global key is still injected by sbx; this
+  extension does not unset it.
 - **Parallel sandboxes on the same repo (undecided).** Direct mount binds the single
   working tree, so two agents on one tree would race. Two paths: *(a) git worktrees* —
   each worktree gets its own identity → its own sandbox for free (note: the in-sandbox

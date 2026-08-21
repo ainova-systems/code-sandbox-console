@@ -595,13 +595,11 @@ export async function createOrAttach(
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace, kit);
-      await secrets.warnConflictingSecrets(ref);
       if (ref.spec.secrets.length > 0) {
         await secrets.ensureSecrets(ref); // exists before per-sandbox secret set
       }
       openAgentAttach(ref);
     } else {
-      await secrets.warnConflictingSecrets(ref);
       if (ref.spec.secrets.length > 0) {
         // Re-check declared secrets on every attach (FR-032): a cancelled prompt or a
         // secret deleted via the CLI would otherwise stay missing forever. Prompts only
@@ -711,7 +709,6 @@ export async function rebuildRef(
       const startedAt = Date.now();
       await createSandbox(ref, workspace, kit);
       leftBehind = undefined;
-      await secrets.warnConflictingSecrets(ref);
       if (ref.spec.secrets.length > 0) {
         await secrets.ensureSecrets(ref);
       }
@@ -754,7 +751,6 @@ export async function shellRef(
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace, kit);
     }
-    await secrets.warnConflictingSecrets(ref);
     if (ref.spec.secrets.length > 0) {
       // Same FR-032 re-check as createOrAttach: prompts only for missing secrets.
       await secrets.ensureSecrets(ref);

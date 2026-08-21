@@ -641,11 +641,8 @@ const SCRIPT = `(function(){
     });
     var reasons = blockedFor(agent);
     if (reasons.length){
-      var globalHit = reasons.some(function(c){ return I.globals.indexOf(c.service) >= 0; });
       secretNotice.style.display = 'block';
-      secretNotice.textContent = reasons[0].reason + (globalHit
-        ? ' A matching global API key is already set and will still be injected — remove it on the host if sign-in fails.'
-        : '');
+      secretNotice.textContent = reasons[0].reason;
     } else {
       secretNotice.style.display = 'none';
       secretNotice.textContent = '';
