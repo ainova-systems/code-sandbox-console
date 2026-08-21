@@ -608,10 +608,25 @@ const SCRIPT = `(function(){
 
   var secBox = document.getElementById('secrets');
   var secretNotice = document.getElementById('secretNotice');
+  // Live selection, not I.secrets: renderSecrets rebuilds the chips on every agent
+  // change (FR-032 hides conflicting services), and restoring only from INIT dropped
+  // GitHub etc. the user had just ticked. Hidden chips stay in picked so switching
+  // the agent back restores them; Save still reads the visible checkboxes.
+  var picked = I.secrets.slice();
   function blockedFor(agent){
     return (I.secretConflicts || []).filter(function(c){ return c.agent === agent; });
   }
+  function harvestSecrets(){
+    var live = secBox.querySelectorAll('.c-sec');
+    if (!live.length) return;
+    Array.prototype.forEach.call(live, function(c){
+      var i = picked.indexOf(c.value);
+      if (c.checked && i < 0) picked.push(c.value);
+      if (!c.checked && i >= 0) picked.splice(i, 1);
+    });
+  }
   function renderSecrets(){
+    harvestSecrets();
     var agent = agSel.value;
     var blocked = {};
     blockedFor(agent).forEach(function(c){ blocked[c.service] = c.reason; });
@@ -620,7 +635,7 @@ const SCRIPT = `(function(){
       if (blocked[svc]) return;
       var l=document.createElement('label'); l.className='chip';
       var c=document.createElement('input'); c.type='checkbox'; c.value=svc; c.className='c-sec';
-      if (I.secrets.indexOf(svc) >= 0) c.checked=true;
+      if (picked.indexOf(svc) >= 0) c.checked=true;
       l.appendChild(c); l.appendChild(document.createTextNode(svc));
       secBox.appendChild(l);
     });

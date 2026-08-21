@@ -855,14 +855,14 @@ const GUEST_LOG_SCRIPT = [
 
 /**
  * FR-061: assemble a log snapshot for one sandbox. Host `daemon.log` is always attempted.
- * In-sandbox files are read only when `guest` is true — the caller must have checked the
- * sandbox is already running; `sbx exec` would otherwise START it just to cat a log.
+ * In-sandbox files are read only when `sbx ls` still reports running **immediately
+ * before** the exec — the caller's earlier probe is stale (Open Logs skips FR-054, and
+ * auto-stop can finish in between). `sbx exec` has no --no-start; it would otherwise
+ * start a stopped sandbox just to cat a log and replay hooks (FR-060).
  */
-export async function collectLogs(
-  name: string,
-  guest: boolean
-): Promise<string> {
+export async function collectLogs(name: string): Promise<string> {
   assertSandboxName(name);
+  const guest = (await stateOf(name)) === "running";
   const parts: string[] = [
     `# Sandbox Console logs — ${name}`,
     `# collected ${new Date().toISOString()}`,

@@ -472,9 +472,10 @@ by hand (see Architecture §8).
   inside the sandbox, which leaves the agent in a `Press any key to log in…` loop
   (upstream [docker/sbx-releases#112](https://github.com/docker/sbx-releases/issues/112)).
   The form hides that checkbox when the agent is Cursor, Save drops it from the recipe,
-  and Connect/Shell never prompt for it. GitHub and other secrets on a Cursor sandbox
+  and Connect/Shell/Rebuild never prompt for it. GitHub and other secrets on a Cursor sandbox
   stay available. A global Cursor key already in the keychain is **warned about, not
-  unset** — it may belong to another sandbox.
+  unset** — it may belong to another sandbox — before Connect, Shell, or Rebuild attaches
+  the agent.
 
 ---
 
@@ -683,13 +684,15 @@ calls **this extension** made.
 
 * **Open Logs** is a per-sandbox action (Explorer context menu on a running or stopped
   instance; palette command for the active sandbox). It writes a snapshot to a temp file
-  (`sandbox-console-<name>-logs.txt` in the OS temp directory) and opens it in the editor.
+  (`sandbox-console-<name>-logs.txt` in the OS temp directory, owner-only `0600` when the
+  OS honours file modes) and opens it in the editor.
 * The snapshot always includes the host `sandboxd/daemon.log` lines that mention this
   sandbox (health/list noise dropped; last ~400 matching lines of a 2 MB tail).
 * In-sandbox files (`/tmp/sandbox-console-hooks.log`, `/var/log/sbx-kit-startup.log`,
   service logs, a path listing of other `*.log`) are included **only if the sandbox is
-  already running**. A stopped sandbox is never started just to read logs — `sbx exec`
-  would auto-start it and replay hooks (FR-060).
+  still running at the `exec`**, not from an earlier probe. A stopped sandbox is never
+  started just to read logs — `sbx exec` auto-starts and would replay hooks (FR-060), and
+  the CLI has no `--no-start`.
 * There is no `sbx logs`; this is the host daemon file plus a conservative `exec` cat of
   known paths. Secret values are not dumped: extra guest files are listed by path only.
 

@@ -711,6 +711,7 @@ export async function rebuildRef(
       const startedAt = Date.now();
       await createSandbox(ref, workspace, kit);
       leftBehind = undefined;
+      await secrets.warnConflictingSecrets(ref);
       if (ref.spec.secrets.length > 0) {
         await secrets.ensureSecrets(ref);
       }
@@ -769,7 +770,8 @@ export async function shellRef(
 /**
  * FR-061: snapshot this sandbox's logs to a temp file and open it. Does not start a
  * stopped sandbox (`sbx exec` would) and is not a lifecycle operation, so it does not
- * take the FR-054 exclusive lock.
+ * take the FR-054 exclusive lock. `collectLogs` re-reads running immediately before
+ * the guest exec rather than trusting this absent-check.
  */
 export async function openLogs(ref: sandbox.SandboxRef): Promise<void> {
   const state = await sandbox.state(ref);
@@ -778,13 +780,21 @@ export async function openLogs(ref: sandbox.SandboxRef): Promise<void> {
   }
   const body = await withProgress(
     `Collecting logs for ${ref.name}…`,
-    async () => sbx.collectLogs(ref.name, state === "running")
+    async () => sbx.collectLogs(ref.name)
   );
   const file = path.join(
     os.tmpdir(),
     `sandbox-console-${ref.name}-logs.txt`
   );
-  fs.writeFileSync(file, body, "utf8");
+  // Owner-only when the OS honours modes (Linux/macOS). Existing files keep their
+  // previous mode on write, so chmod after create covers the overwrite path. Windows
+  // chmod only toggles the read-only bit and may throw — the snapshot still opens.
+  fs.writeFileSync(file, body, { encoding: "utf8", mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // ignore
+  }
   log.block(`sandbox logs — ${ref.name}`, `wrote ${file}`);
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
   await vscode.window.showTextDocument(doc, { preview: false });
