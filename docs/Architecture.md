@@ -68,27 +68,27 @@ All source is in `src/`. The extension bundles to `dist/extension.js` via esbuil
 | `extension.ts` | Activation, palette commands, status bar item, silent startup discovery feeding it (Features §3, "Attach before Create"). Orchestrates the flows below. The status item reports host readiness rather than hiding when nothing can run (FR-059), and `Check Prerequisites` re-runs the report on demand. |
 | `config.ts` | Parses/writes the committed `.sandbox/config.yaml` recipe, incl. the project `name` (FR-009, §6). |
 | `identity.ts` | Reads/writes the **gitignored** `.sandbox/identity.yaml` — a short random `{id}` per working copy (FR-001, §6). |
-| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`diagnose -o json`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, and the argv allowlist asserts (§9). Invocations run through `log.ts` (FR-055); the argument vectors stay here. The executable is resolved on **every** call and never memoised (FR-059): where the CLI lives is precisely what changes under a running extension, and any remembered answer — hit or miss — survives an install, a move or an uninstall and forces a window reload. One `existsSync` in front of a `spawn` buys nothing worth that. |
+| `sbx.ts` | CLI wrapper for every child-process `sbx` invocation: resolves the executable, `version`/`diagnose -o json`/`ls --json`/`create`/`stop`/`rm`, `template load`/`ls`/`rm`, `secret set` (value piped over stdin), `ports`, live agent/secret discovery, `hostToSandboxPath`, the argv allowlist asserts (§9), and FR-061 log collection (`collectLogs`: host `daemon.log` tail plus a running-only `exec` of known in-sandbox log files). Invocations run through `log.ts` (FR-055); the argument vectors stay here. The executable is resolved on **every** call and never memoised (FR-059): where the CLI lives is precisely what changes under a running extension, and any remembered answer — hit or miss — survives an install, a move or an uninstall and forces a window reload. One `existsSync` in front of a `spawn` buys nothing worth that. |
 | `sandbox.ts` | Maps the recipe to concrete `SandboxRef`s: derives the sandbox name `<name>-<key>-<id>` (§6) and exposes lifecycle ops (`state`/`stop`/`destroy`/`create`) over `sbx.ts`. |
 | `images.ts` | Custom-image pipeline: `docker build --pull` → `docker save` → `sbx template load` (FR-008, §7), the rebuild image-refresh policy (FR-053), with dockerfile/context paths contained inside the repo (§9). Owns the host-Docker probe `dockerState()` — `docker --version` for *installed*, then `docker info` for *engine reachable*, since the client-only `--version` succeeds while the engine is stopped (FR-059) — and the one sentence both the build failure and the form's notice use. Executable resolved per call, like `sbx.ts`. |
 | `kits.ts` | Lifecycle hooks (FR-060, §7): renders the generated kit `.sandbox/kits/<key>/spec.yaml` **and** the runner `startup.sh` it bootstraps (both gitignored artefacts, rewritten before every start — spec 018), derives the `SANDBOX_*` variables that make a hook mount-agnostic, and turns a rejected kit into the user-facing refusal. Knows the kit schema and the runner's semantics; the `--kit` argv itself lives in `sbx.ts`. |
-| `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. |
+| `secrets.ts` | Provisions missing service secrets — cached-entry picker / prompt → `sbx secret set` over stdin (FR-032 + FR-051, §8) — and the `Manage Cached Secrets` command. Skips and warns on agent/secret pairs that cannot authenticate together (Cursor API key on Cursor). |
 | `blobs.ts` | The per-project secret cache store (FR-051, §8): `~/.sbx/<entry>.<service>.dpapi` blobs, encrypted/decrypted via a PowerShell child process (DPAPI; value over stdin/stdout pipes only). Shared on disk with the generated CLI. |
 | `script.ts` | Renders and maintains the generated project CLI `.sandbox/scripts/sbx.sh` (FR-052, §13): version+hash header, silent refresh of unmodified copies, never overwrites manual edits silently. |
-| `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054), cancellation at stage boundaries (FR-056) — §12 — and the mount preflight (FR-058, §5) whose modal refusal it shows itself, raising the shared `HandledError` so no surface reports it twice. |
+| `ops.ts` | Per-sandbox create/attach/stop/rebuild/destroy/shell/open-logs, shared by the palette and the Explorer so the two never drift. Owns the progress spinners, the single-flight guard (FR-054), cancellation at stage boundaries (FR-056) — §12 — and the mount preflight (FR-058, §5) whose modal refusal it shows itself, raising the shared `HandledError` so no surface reports it twice. Open Logs (FR-061) is deliberately **not** exclusive: it is a diagnostic read and must not start a stopped sandbox. |
 | `git.ts` | Read-only host git probes (FR-058): `isShallowRepository` (`git rev-parse --is-shallow-repository`, resolved with `-C` so a workspace inside a repo works). Own module for the same reason `sbx.ts` is one — one place per external CLI's argv. Never mutates a repository. |
 | `prereq.ts` | Host readiness (FR-059, §5): classifies `sbx diagnose` into *missing / signed-out / unhealthy*, formats the status-bar tooltip, and owns the modal refusal shared by the status bar, the Sandboxes view and the New Sandbox command — three surfaces that cannot import one another. Also answers the **separate** host-Docker question for the custom-image mode. Probes are never cached: readiness is exactly what changes under the extension. |
 | `log.ts` | The operation log (FR-055): the `Sandbox Console` output channel plus the `spawn`-based runner every `sbx`/`docker` call goes through — streams child output to the channel and to the progress notification, and kills the child on cancel. Process plumbing only: it knows no CLI strings. |
 | `names.ts` | The per-working-copy record of sbx names that can no longer be created (FR-057, §14): `workspaceState`-backed, written when a create fails with the leaked-state error, read by key derivation. Local by construction — it never reaches the committed recipe. |
 | `terminal.ts` | Native VS Code terminals whose `shellPath` is `sbx` — assembles the interactive `run`/`exec` shellArgs and pools agent terminals per sandbox (§10, §12). This is where the agent actually attaches. Also opens the one **host** terminal the extension needs (`openHostCommandTerminal`): the FR-058 hand-off, which types `git fetch --unshallow` and leaves the Enter to the user. |
-| `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. States the host-Docker requirement inside the *Custom: Dockerfile* block, so it is known when the mode is chosen rather than at Create (FR-059). |
-| `tree.ts` | Sandbox Explorer view + per-node commands (§12). Renders a readiness node instead of an empty tree when the host cannot run sandboxes or their state cannot be read (FR-059). |
-| `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. |
+| `form.ts` | The New/Edit webview (§7, §12): persists to the recipe AND applies to the instance. States the host-Docker requirement inside the *Custom: Dockerfile* block, so it is known when the mode is chosen rather than at Create (FR-059). Hides agent/secret pairs that cannot authenticate together (FR-032, Cursor API key on Cursor). |
+| `tree.ts` | Sandbox Explorer view + per-node commands (§12), including **Open Logs** (FR-061). Renders a readiness node instead of an empty tree when the host cannot run sandboxes or their state cannot be read (FR-059). |
+| `agents.ts` / `services.ts` | Static agent/secret-service registries (labels + fallback) backing the live discovery in `sbx.ts`. `services.ts` also owns the agent/secret conflict table (FR-032). |
 
 Dependency direction (verified against imports):
 `extension → {ops, form, tree, prereq, sandbox, config, identity, agents, names, script, secrets, sbx, log}`;
 `tree → {ops, form, prereq, sandbox, config, identity, agents, sbx, log}`;
-`form → {ops, prereq, secrets, sandbox, config, identity, agents, names, script, sbx}`;
+`form → {ops, prereq, secrets, sandbox, config, identity, agents, names, script, sbx, services}`;
 `ops → {images, kits, secrets, sandbox, terminal, names, git, sbx, log}`;
 `terminal → {sandbox, agents, sbx}`; `secrets → {blobs, sandbox, services, sbx}`;
 `kits → {config, sbx}`;
@@ -117,6 +117,7 @@ a stopped sandbox is resumed by `sbx run <name>` (or auto-started by `sbx exec`)
 | Start (FR-004) | folded into Connect | `sbx run <name>` |
 | Stop (FR-006) | `Stop` | `sbx stop <name>` |
 | Open Shell | `Shell` | `sbx exec -it -w /<drive>/… <name> bash` (auto-starts, lands in workspace) |
+| Open Logs (FR-061) | `Open Logs` | host `daemon.log` (no CLI); `sbx exec … bash -lc <known log files>` only if already running |
 | Discovery (FR-002) | on activation | `sbx ls --json` → match by name |
 | Rebuild/Delete (FR-007) | `Rebuild` (palette + Explorer) / `Delete instance` (Explorer, §12) | `sbx rm --force <name>` (+ image rebuild, §11) |
 
@@ -458,6 +459,15 @@ in gh's own config **inside** the sandbox. Runs only if `gh` is present and the 
 exists; silent on failure. The form separates **Global credentials** (host-global,
 read-only) from **Custom credentials** (this sandbox).
 
+**Cursor API key vs Cursor sign-in (FR-032).** Docker documents both `sbx secret set cursor`
+and interactive OAuth; when both resolve, the stored secret takes precedence. The API-key
+path is broken inside the sandbox ([docker/sbx-releases#112](https://github.com/docker/sbx-releases/issues/112)):
+`cursor-agent` still prompts to log in and the loop never completes, while the same sandbox
+signs in when no Cursor secret is set. The form therefore does not offer a `cursor` secret
+when the agent is `cursor`, Save drops it from that recipe, and Connect/Shell never prompt
+for it. GitHub and other secrets stay available. A global Cursor key already in the
+keychain is warned about, not unset — it may belong to another sandbox.
+
 ## 9. Security & isolation
 
 Provided by `sbx`, surfaced (not reimplemented) by the extension:
@@ -579,8 +589,8 @@ instance) → absent → Remove from config:
 
 | State | Inline actions |
 |---|---|
-| running | Stop · Connect · *(Shell in the context menu)* |
-| stopped | Connect · Edit · Delete instance · *(Rebuild in the context menu)* |
+| running | Stop · Connect · *(Shell, Open Logs in the context menu)* |
+| stopped | Connect · Edit · Delete instance · *(Rebuild, Open Logs in the context menu)* |
 | absent (defined, no instance) | Connect (creates the instance) · Edit · Remove from config |
 | busy (transient — an operation is in flight, FR-054) | none |
 
@@ -716,6 +726,12 @@ re-encoding these rules as prose and calls subcommands instead
   Claude Code's Remote Control cannot mint the session credentials it needs (401/403,
   confirmed not a network-policy block). Run Remote Control from a host (non-sandboxed)
   Claude Code.
+- **A Cursor API key cannot authenticate a Cursor sandbox.** Same family as Remote
+  Control: the proxy prefers the stored `cursor` secret, `cursor-agent` rejects the
+  injected sentinel, and the OAuth UI loops on `Press any key to log in…` (upstream
+  [#112](https://github.com/docker/sbx-releases/issues/112)). The working path is
+  interactive sign-in with **no** Cursor secret set. The form and provisioning refuse
+  that combination (FR-032); a global key already in the keychain is only warned about.
 - **Parallel sandboxes on the same repo (undecided).** Direct mount binds the single
   working tree, so two agents on one tree would race. Two paths: *(a) git worktrees* —
   each worktree gets its own identity → its own sandbox for free (note: the in-sandbox

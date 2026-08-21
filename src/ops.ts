@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import * as git from "./git";
 import * as images from "./images";
@@ -592,11 +595,13 @@ export async function createOrAttach(
       await assertMountUsable(ref, workspace); // FR-058: clone mount needs full history
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace, kit);
+      await secrets.warnConflictingSecrets(ref);
       if (ref.spec.secrets.length > 0) {
         await secrets.ensureSecrets(ref); // exists before per-sandbox secret set
       }
       openAgentAttach(ref);
     } else {
+      await secrets.warnConflictingSecrets(ref);
       if (ref.spec.secrets.length > 0) {
         // Re-check declared secrets on every attach (FR-032): a cancelled prompt or a
         // secret deleted via the CLI would otherwise stay missing forever. Prompts only
@@ -748,6 +753,7 @@ export async function shellRef(
       await ensureImageForRef(ref, root.fsPath);
       await createSandbox(ref, workspace, kit);
     }
+    await secrets.warnConflictingSecrets(ref);
     if (ref.spec.secrets.length > 0) {
       // Same FR-032 re-check as createOrAttach: prompts only for missing secrets.
       await secrets.ensureSecrets(ref);
@@ -758,6 +764,30 @@ export async function shellRef(
       void reportStartupHooks(root, ref, startedAt); // FR-060 (`exec` auto-starts too)
     }
   });
+}
+
+/**
+ * FR-061: snapshot this sandbox's logs to a temp file and open it. Does not start a
+ * stopped sandbox (`sbx exec` would) and is not a lifecycle operation, so it does not
+ * take the FR-054 exclusive lock.
+ */
+export async function openLogs(ref: sandbox.SandboxRef): Promise<void> {
+  const state = await sandbox.state(ref);
+  if (state === "absent") {
+    throw new Error(`${ref.name} has no instance yet.`);
+  }
+  const body = await withProgress(
+    `Collecting logs for ${ref.name}…`,
+    async () => sbx.collectLogs(ref.name, state === "running")
+  );
+  const file = path.join(
+    os.tmpdir(),
+    `sandbox-console-${ref.name}-logs.txt`
+  );
+  fs.writeFileSync(file, body, "utf8");
+  log.block(`sandbox logs — ${ref.name}`, `wrote ${file}`);
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+  await vscode.window.showTextDocument(doc, { preview: false });
 }
 
 /**

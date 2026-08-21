@@ -36,6 +36,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("sandboxConsole.stop", () => stop()),
     vscode.commands.registerCommand("sandboxConsole.openShell", () => shell()),
     vscode.commands.registerCommand("sandboxConsole.rebuild", () => rebuild()),
+    vscode.commands.registerCommand("sandboxConsole.openLogs", () => openLogs()),
     // FR-055: the operation log — every sbx/docker invocation, streamed while it runs.
     vscode.commands.registerCommand("sandboxConsole.showLog", () => log.show()),
     { dispose: () => log.dispose() },
@@ -373,6 +374,13 @@ async function attach(): Promise<void> {
 /** Open a shell in the primary sandbox. */
 async function shell(): Promise<void> {
   await actOnPrimary("open shell", (root, ref) => ops.shellRef(root, ref), true);
+}
+
+/** FR-061: snapshot logs for the active sandbox into a temp file and open it. */
+async function openLogs(): Promise<void> {
+  await actOnPrimary("open logs", async (_root, ref) => {
+    await ops.openLogs(ref);
+  });
 }
 
 /** FR-007 Rebuild: rebuild the custom image (if any) and recreate the primary sandbox. */

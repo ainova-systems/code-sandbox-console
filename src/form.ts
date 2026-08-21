@@ -17,6 +17,7 @@ import * as sandbox from "./sandbox";
 import * as sbx from "./sbx";
 import { ensureProjectScript } from "./script";
 import * as secrets from "./secrets";
+import { SECRET_CONFLICTS, isConflictingSecret } from "./services";
 
 /**
  * Instance-first New/Edit panel. The user edits a SANDBOX (not a file): Save persists the
@@ -69,6 +70,8 @@ interface InitData {
   isDefault: boolean;
   /** FR-059: the host-Docker requirement of the Dockerfile mode; empty when a build can run. */
   dockerNotice: string;
+  /** FR-032: agent+service pairs the form must not offer (Cursor API key on Cursor). */
+  secretConflicts: { agent: string; service: string; reason: string }[];
 }
 
 /** FR-060: textarea text → command list. Blank lines are separators, not commands. */
@@ -148,6 +151,7 @@ export async function openForm(
     hookServices: (current?.services ?? []).join("\n"),
     isDefault: current?.default ?? false,
     dockerNotice: dockerNotice ?? "",
+    secretConflicts: SECRET_CONFLICTS,
   };
 
   const panel = vscode.window.createWebviewPanel(
@@ -308,10 +312,14 @@ async function apply(
   // FR-032: the committed secrets list is the recipe's requirement. Global secrets on
   // THIS machine only affect prompting, so requirements the form did not render
   // (globally satisfied here, or unknown services) must survive a save round-trip.
+  // Agent/secret pairs that cannot authenticate together (Cursor API key on Cursor)
+  // are dropped even if an older recipe still listed them.
   const carried = (oldSpec?.secrets ?? []).filter(
-    (s) => !renderedServices.includes(s)
+    (s) => !renderedServices.includes(s) && !isConflictingSecret(agent, s)
   );
-  const specSecrets = [...new Set([...(payload.secrets ?? []), ...carried])];
+  const specSecrets = [...new Set([...(payload.secrets ?? []), ...carried])].filter(
+    (s) => !isConflictingSecret(agent, s)
+  );
 
   const spec: SandboxSpec = {
     ...oldSpec, // fields the form does not edit (e.g. `context`) survive an edit
@@ -599,13 +607,37 @@ const SCRIPT = `(function(){
   }
 
   var secBox = document.getElementById('secrets');
-  I.services.forEach(function(svc){
-    var l=document.createElement('label'); l.className='chip';
-    var c=document.createElement('input'); c.type='checkbox'; c.value=svc; c.className='c-sec';
-    if (I.secrets.indexOf(svc) >= 0) c.checked=true;
-    l.appendChild(c); l.appendChild(document.createTextNode(svc));
-    secBox.appendChild(l);
-  });
+  var secretNotice = document.getElementById('secretNotice');
+  function blockedFor(agent){
+    return (I.secretConflicts || []).filter(function(c){ return c.agent === agent; });
+  }
+  function renderSecrets(){
+    var agent = agSel.value;
+    var blocked = {};
+    blockedFor(agent).forEach(function(c){ blocked[c.service] = c.reason; });
+    secBox.innerHTML = '';
+    I.services.forEach(function(svc){
+      if (blocked[svc]) return;
+      var l=document.createElement('label'); l.className='chip';
+      var c=document.createElement('input'); c.type='checkbox'; c.value=svc; c.className='c-sec';
+      if (I.secrets.indexOf(svc) >= 0) c.checked=true;
+      l.appendChild(c); l.appendChild(document.createTextNode(svc));
+      secBox.appendChild(l);
+    });
+    var reasons = blockedFor(agent);
+    if (reasons.length){
+      var globalHit = reasons.some(function(c){ return I.globals.indexOf(c.service) >= 0; });
+      secretNotice.style.display = 'block';
+      secretNotice.textContent = reasons[0].reason + (globalHit
+        ? ' A matching global API key is already set and will still be injected — remove it on the host if sign-in fails.'
+        : '');
+    } else {
+      secretNotice.style.display = 'none';
+      secretNotice.textContent = '';
+    }
+  }
+  renderSecrets();
+  agSel.addEventListener('change', renderSecrets);
 
   Array.prototype.forEach.call(document.querySelectorAll('input[name=env]'), function(r){ r.checked = (r.value === I.env); });
   document.getElementById('image').value = I.image || '';
@@ -779,6 +811,7 @@ function getHtml(data: InitData, nonce: string): string {
     <div class="field">
       <label class="lbl">Custom credentials · this sandbox</label>
       <div id="secrets" class="chips"></div>
+      <div id="secretNotice" class="warn" style="display:none"></div>
       <div class="caption">Tick what this sandbox needs; you'll be prompted for values (only missing ones) when applied.</div>
     </div>
     <details>

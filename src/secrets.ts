@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as blobs from "./blobs";
 import { SandboxRef } from "./sandbox";
 import * as sbx from "./sbx";
-import { serviceLabel } from "./services";
+import { conflictsFor, isConflictingSecret, serviceLabel } from "./services";
 
 /**
  * Secret provisioning (FR-032). The recipe lists required service-secret NAMES; this
@@ -30,7 +30,43 @@ export async function missingSecrets(ref: SandboxRef): Promise<string[]> {
       .filter((s) => s.scope === "global" || s.scope === ref.name)
       .map((s) => s.service)
   );
-  return ref.spec.secrets.filter((s) => !satisfied.has(s));
+  return ref.spec.secrets.filter(
+    (s) => !satisfied.has(s) && !isConflictingSecret(ref.spec.agent, s)
+  );
+}
+
+/**
+ * FR-032: warn when a Cursor sandbox would still receive a Cursor API key (already in
+ * the keychain, or still listed in the recipe). Does not unset anything — a global key
+ * may belong to another sandbox on the machine.
+ */
+export async function warnConflictingSecrets(ref: SandboxRef): Promise<void> {
+  const conflicts = conflictsFor(ref.spec.agent);
+  if (conflicts.length === 0) {
+    return;
+  }
+  const have = await sbx.listSecrets();
+  const live = conflicts.filter((c) =>
+    have.some(
+      (s) =>
+        s.service === c.service &&
+        (s.scope === "global" || s.scope === ref.name)
+    )
+  );
+  const listed = conflicts.filter((c) => ref.spec.secrets.includes(c.service));
+  const hit = live[0] ?? listed[0];
+  if (!hit) {
+    return;
+  }
+  const where =
+    live.length > 0
+      ? have.some((s) => s.service === hit.service && s.scope === "global")
+        ? "globally"
+        : "for this sandbox"
+      : "in the recipe";
+  void vscode.window.showWarningMessage(
+    `${ref.name}: ${hit.reason} A '${hit.service}' secret is set ${where}. Remove it (sbx secret rm) and Connect again without that credential.`
+  );
 }
 
 /**

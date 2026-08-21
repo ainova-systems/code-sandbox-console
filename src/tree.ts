@@ -382,6 +382,13 @@ export function registerExplorer(context: vscode.ExtensionContext): void {
         withNode(node, "open shell", (root, ref) => ops.shellRef(root, ref))
     ),
     vscode.commands.registerCommand(
+      "sandboxConsole.item.openLogs",
+      (node?: SandboxNode) =>
+        withNode(node, "open logs", async (_root, ref) => {
+          await ops.openLogs(ref);
+        })
+    ),
+    vscode.commands.registerCommand(
       "sandboxConsole.item.rebuild",
       (node?: SandboxNode) =>
         withNode(node, "rebuild", async (root, ref) => {

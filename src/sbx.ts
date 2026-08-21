@@ -1,4 +1,5 @@
 import { ChildProcessWithoutNullStreams, spawn } from "child_process";
+import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
 import * as log from "./log";
@@ -713,4 +714,187 @@ export async function ghAuthLogin(name: string, token: string): Promise<void> {
   if (code !== 0) {
     throw new Error(stderr.trim() || "gh auth login failed");
   }
+}
+
+/**
+ * Host path of sandboxd's `daemon.log` — same layout as `sbxCandidates()`, empty when
+ * this OS has no well-known location. FR-061 reads this file; it is not an sbx invocation.
+ */
+export function daemonLogCandidates(): string[] {
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    const local = process.env.LOCALAPPDATA;
+    return local
+      ? [
+          path.join(
+            local,
+            "DockerSandboxes",
+            "sandboxes",
+            "state",
+            "sandboxd",
+            "daemon.log"
+          ),
+        ]
+      : [];
+  }
+  if (process.platform === "darwin") {
+    return [
+      path.join(
+        home,
+        "Library",
+        "Application Support",
+        "com.docker.sandboxes",
+        "sandboxes",
+        "sandboxd",
+        "daemon.log"
+      ),
+    ];
+  }
+  return [
+    path.join(
+      home,
+      ".local",
+      "state",
+      "sandboxes",
+      "sandboxes",
+      "sandboxd",
+      "daemon.log"
+    ),
+    path.join(
+      home,
+      ".local",
+      "share",
+      "com.docker.sandboxes",
+      "sandboxes",
+      "sandboxd",
+      "daemon.log"
+    ),
+  ];
+}
+
+/** How much of a large daemon.log to scan, and how many matching lines to keep. */
+const DAEMON_TAIL_BYTES = 2 * 1024 * 1024;
+const DAEMON_MAX_LINES = 400;
+
+function daemonNoise(line: string): boolean {
+  // WARN/ERROR mentioning this sandbox always stay — they are why the user opened logs.
+  if (/"level":"(WARN|ERROR)"/.test(line)) {
+    return false;
+  }
+  return (
+    line.includes("/daemon/health") ||
+    line.includes("/policy/profiles") ||
+    line.includes("uploaded event batch") ||
+    (line.includes('"msg":"http request"') && line.includes("/sandbox"))
+  );
+}
+
+function readDaemonLog(name: string): string | undefined {
+  const file = daemonLogCandidates().find((p) => fs.existsSync(p));
+  if (!file) {
+    return undefined;
+  }
+  let text: string;
+  try {
+    const stat = fs.statSync(file);
+    if (stat.size <= DAEMON_TAIL_BYTES) {
+      text = fs.readFileSync(file, "utf8");
+    } else {
+      const fd = fs.openSync(file, "r");
+      const buf = Buffer.alloc(DAEMON_TAIL_BYTES);
+      fs.readSync(fd, buf, 0, buf.length, stat.size - DAEMON_TAIL_BYTES);
+      fs.closeSync(fd);
+      text = buf.toString("utf8");
+      const nl = text.indexOf("\n");
+      if (nl >= 0) {
+        text = text.slice(nl + 1); // drop a mid-line start
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  const kept = text
+    .split(/\r?\n/)
+    .filter((line) => line.includes(name) && !daemonNoise(line));
+  const tail =
+    kept.length > DAEMON_MAX_LINES ? kept.slice(-DAEMON_MAX_LINES) : kept;
+  const note =
+    kept.length > DAEMON_MAX_LINES
+      ? `(${kept.length} matching lines, showing last ${DAEMON_MAX_LINES} from ${file})`
+      : `(${kept.length} matching lines from ${file})`;
+  return `${note}\n${tail.join("\n") || "(no matching lines in the tailed daemon.log)"}`;
+}
+
+/**
+ * Known in-sandbox log files (FR-060 hooks + sbx's dispatcher). Paths only for anything
+ * else — those files may hold secrets and must not be dumped blindly. The script has no
+ * interpolated user input; `name` is asserted before it is passed as the exec target.
+ */
+const GUEST_LOG_SCRIPT = [
+  "set +e",
+  "echo '=== sandbox-console-hooks.log ==='",
+  "if [ -f /tmp/sandbox-console-hooks.log ]; then tail -c 65536 /tmp/sandbox-console-hooks.log; else echo '(missing)'; fi",
+  "echo",
+  "echo '=== sbx-kit-startup.log ==='",
+  "if [ -f /var/log/sbx-kit-startup.log ]; then tail -c 65536 /var/log/sbx-kit-startup.log; else echo '(missing)'; fi",
+  "echo",
+  "echo '=== service logs ==='",
+  "found=0",
+  "for f in /tmp/sandbox-console-service-*.log; do",
+  '  [ -f "$f" ] || continue',
+  "  found=1",
+  '  echo "--- $f ---"',
+  '  tail -c 32768 "$f"',
+  "  echo",
+  "done",
+  '[ "$found" = 1 ] || echo \'(none)\'',
+  "echo",
+  "echo '=== other log files (paths only) ==='",
+  "find /tmp /home/agent /var/log -maxdepth 3 \\( -name '*.log' -o -name '*.txt' \\) -type f 2>/dev/null | head -n 40",
+].join("\n");
+
+/**
+ * FR-061: assemble a log snapshot for one sandbox. Host `daemon.log` is always attempted.
+ * In-sandbox files are read only when `guest` is true — the caller must have checked the
+ * sandbox is already running; `sbx exec` would otherwise START it just to cat a log.
+ */
+export async function collectLogs(
+  name: string,
+  guest: boolean
+): Promise<string> {
+  assertSandboxName(name);
+  const parts: string[] = [
+    `# Sandbox Console logs — ${name}`,
+    `# collected ${new Date().toISOString()}`,
+    guest
+      ? "# guest logs: running sandbox"
+      : "# guest logs: skipped (sandbox not running; exec would start it)",
+    "",
+    "=== host daemon.log (this sandbox) ===",
+    readDaemonLog(name) ?? "(daemon.log not found)",
+    "",
+  ];
+  if (!guest) {
+    return parts.join("\n");
+  }
+  parts.push("=== in-sandbox logs ===");
+  const { stdout, stderr, code } = await probe([
+    "exec",
+    name,
+    "bash",
+    "-lc",
+    GUEST_LOG_SCRIPT,
+  ]);
+  if (code === 0) {
+    parts.push(stdout.trimEnd() || "(empty)");
+  } else {
+    parts.push(`(exec failed, exit ${code})`);
+    if (stderr.trim()) {
+      parts.push(stderr.trim());
+    }
+    if (stdout.trim()) {
+      parts.push(stdout.trim());
+    }
+  }
+  return parts.join("\n");
 }

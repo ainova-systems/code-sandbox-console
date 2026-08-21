@@ -100,6 +100,12 @@
         "icon": "$(output)"
       },
       {
+        "command": "sandboxConsole.openLogs",
+        "title": "Open Logs",
+        "category": "Sandbox",
+        "icon": "$(file-text)"
+      },
+      {
         "command": "sandboxConsole.checkPrerequisites",
         "title": "Check Prerequisites",
         "category": "Sandbox"
@@ -127,6 +133,12 @@
         "title": "Shell",
         "category": "Sandbox",
         "icon": "$(terminal-bash)"
+      },
+      {
+        "command": "sandboxConsole.item.openLogs",
+        "title": "Open Logs",
+        "category": "Sandbox",
+        "icon": "$(file-text)"
       },
       {
         "command": "sandboxConsole.item.rebuild",
@@ -179,6 +191,10 @@
         },
         {
           "command": "sandboxConsole.item.shell",
+          "when": "false"
+        },
+        {
+          "command": "sandboxConsole.item.openLogs",
           "when": "false"
         },
         {
@@ -250,6 +266,11 @@
           "command": "sandboxConsole.item.shell",
           "when": "view == sandboxConsoleExplorer && viewItem == sandbox.running",
           "group": "1_run@2"
+        },
+        {
+          "command": "sandboxConsole.item.openLogs",
+          "when": "view == sandboxConsoleExplorer && viewItem =~ /^sandbox\\.(running|stopped)$/",
+          "group": "4_diag@1"
         },
         {
           "command": "sandboxConsole.item.stop",
