@@ -58,14 +58,24 @@ export async function warnConflictingSecrets(ref: SandboxRef): Promise<void> {
   if (!hit) {
     return;
   }
+  const global =
+    live.length > 0 &&
+    have.some((s) => s.service === hit.service && s.scope === "global");
   const where =
     live.length > 0
-      ? have.some((s) => s.service === hit.service && s.scope === "global")
+      ? global
         ? "globally"
         : "for this sandbox"
       : "in the recipe";
+  const rm = global
+    ? `sbx secret rm -g ${hit.service}`
+    : live.length > 0
+      ? `sbx secret rm ${ref.name} ${hit.service}`
+      : undefined;
   void vscode.window.showWarningMessage(
-    `${ref.name}: ${hit.reason} A '${hit.service}' secret is set ${where}. Remove it (sbx secret rm) and Connect again without that credential.`
+    rm
+      ? `${ref.name}: ${hit.reason} A '${hit.service}' secret is set ${where}. Remove it (${rm}) and Connect again without that credential.`
+      : `${ref.name}: ${hit.reason} A '${hit.service}' secret is listed ${where}. Drop it from the recipe and Connect again.`
   );
 }
 

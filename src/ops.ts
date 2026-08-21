@@ -769,35 +769,43 @@ export async function shellRef(
 
 /**
  * FR-061: snapshot this sandbox's logs to a temp file and open it. Does not start a
- * stopped sandbox (`sbx exec` would) and is not a lifecycle operation, so it does not
- * take the FR-054 exclusive lock. `collectLogs` re-reads running immediately before
- * the guest exec rather than trusting this absent-check.
+ * stopped sandbox (`sbx exec` would). Takes the FR-054 lock so Stop/Rebuild cannot
+ * finish between the running check and the guest exec; `collectLogs` still re-reads
+ * running immediately before that exec. A failed `sbx ls` still writes the host
+ * daemon.log section — that file is what remains when the CLI is unhealthy.
  */
 export async function openLogs(ref: sandbox.SandboxRef): Promise<void> {
-  const state = await sandbox.state(ref);
-  if (state === "absent") {
-    throw new Error(`${ref.name} has no instance yet.`);
-  }
-  const body = await withProgress(
-    `Collecting logs for ${ref.name}…`,
-    async () => sbx.collectLogs(ref.name)
-  );
-  const file = path.join(
-    os.tmpdir(),
-    `sandbox-console-${ref.name}-logs.txt`
-  );
-  // Owner-only when the OS honours modes (Linux/macOS). Existing files keep their
-  // previous mode on write, so chmod after create covers the overwrite path. Windows
-  // chmod only toggles the read-only bit and may throw — the snapshot still opens.
-  fs.writeFileSync(file, body, { encoding: "utf8", mode: 0o600 });
-  try {
-    fs.chmodSync(file, 0o600);
-  } catch {
-    // ignore
-  }
-  log.block(`sandbox logs — ${ref.name}`, `wrote ${file}`);
-  const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-  await vscode.window.showTextDocument(doc, { preview: false });
+  await exclusive(ref.name, "Open Logs", async () => {
+    let state: "absent" | "running" | "stopped" | "unknown";
+    try {
+      state = await sandbox.state(ref);
+    } catch {
+      state = "unknown";
+    }
+    if (state === "absent") {
+      throw new Error(`${ref.name} has no instance yet.`);
+    }
+    const body = await withProgress(
+      `Collecting logs for ${ref.name}…`,
+      async () => sbx.collectLogs(ref.name)
+    );
+    const file = path.join(
+      os.tmpdir(),
+      `sandbox-console-${ref.name}-logs.txt`
+    );
+    // Owner-only when the OS honours modes (Linux/macOS). Existing files keep their
+    // previous mode on write, so chmod after create covers the overwrite path. Windows
+    // chmod only toggles the read-only bit and may throw — the snapshot still opens.
+    fs.writeFileSync(file, body, { encoding: "utf8", mode: 0o600 });
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch {
+      // ignore
+    }
+    log.block(`sandbox logs — ${ref.name}`, `wrote ${file}`);
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    await vscode.window.showTextDocument(doc, { preview: false });
+  });
 }
 
 /**

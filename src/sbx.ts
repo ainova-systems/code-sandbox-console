@@ -854,15 +854,21 @@ const GUEST_LOG_SCRIPT = [
 ].join("\n");
 
 /**
- * FR-061: assemble a log snapshot for one sandbox. Host `daemon.log` is always attempted.
+ * FR-061: assemble a log snapshot for one sandbox. Host `daemon.log` is always attempted,
+ * including when `sbx ls` fails — that is when the host file is the remaining trail.
  * In-sandbox files are read only when `sbx ls` still reports running **immediately
- * before** the exec — the caller's earlier probe is stale (Open Logs skips FR-054, and
- * auto-stop can finish in between). `sbx exec` has no --no-start; it would otherwise
- * start a stopped sandbox just to cat a log and replay hooks (FR-060).
+ * before** the exec. Open Logs takes FR-054 so Stop/Rebuild cannot land in that gap;
+ * auto-stop (the daemon, not this extension) still cannot be closed because `sbx exec`
+ * has no --no-start. Guest exec is opaque: stdout is the snapshot, never FR-055.
  */
 export async function collectLogs(name: string): Promise<string> {
   assertSandboxName(name);
-  const guest = (await stateOf(name)) === "running";
+  let guest = false;
+  try {
+    guest = (await stateOf(name)) === "running";
+  } catch {
+    guest = false;
+  }
   const parts: string[] = [
     `# Sandbox Console logs — ${name}`,
     `# collected ${new Date().toISOString()}`,
@@ -878,13 +884,10 @@ export async function collectLogs(name: string): Promise<string> {
     return parts.join("\n");
   }
   parts.push("=== in-sandbox logs ===");
-  const { stdout, stderr, code } = await probe([
-    "exec",
-    name,
-    "bash",
-    "-lc",
-    GUEST_LOG_SCRIPT,
-  ]);
+  const { stdout, stderr, code } = await run(
+    ["exec", name, "bash", "-lc", GUEST_LOG_SCRIPT],
+    { quiet: true, opaque: true }
+  );
   if (code === 0) {
     parts.push(stdout.trimEnd() || "(empty)");
   } else {

@@ -106,6 +106,12 @@ export interface RunOptions extends OpContext {
    */
   quiet?: boolean;
   /**
+   * Never copy child stdout/stderr into the channel. Quiet+opaque still records
+   * header+exit on failure (so the call is visible) but not the body — FR-061 guest
+   * log collection, whose stdout is the snapshot and must not land in FR-055.
+   */
+  opaque?: boolean;
+  /**
    * Whether cancelling may kill this child (default true). `false` means "let it finish,
    * the caller undoes it afterwards" — the only safe option for a command whose partial
    * state its own tooling cannot clean up. See `sbx.run` for why every sbx call sets it.
@@ -262,10 +268,13 @@ export function run(
           out().appendLine(head);
           // `message` (a spawn failure such as ENOENT) never reached the stream handlers,
           // and the quiet `emit` above dropped it — include it, or "sbx not installed"
-          // would show as a bare non-zero exit.
-          const text = (stderr || stdout || message || "").trim();
-          if (text) {
-            out().appendLine(`${mark}  ${text.replace(/\r?\n/g, `\n${mark}  `)}`);
+          // would show as a bare non-zero exit. Opaque calls keep the body out: the
+          // caller already has stdout/stderr, and guest logs must not enter FR-055.
+          if (!opts.opaque) {
+            const text = (stderr || stdout || message || "").trim();
+            if (text) {
+              out().appendLine(`${mark}  ${text.replace(/\r?\n/g, `\n${mark}  `)}`);
+            }
           }
           writeTail(code);
         }
