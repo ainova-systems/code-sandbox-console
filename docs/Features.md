@@ -467,6 +467,13 @@ by hand (see Architecture §8).
   (this-sandbox) ones. For `github`, beyond the proxy secret the extension also runs
   `gh auth login --with-token` inside the sandbox (best-effort, only if `gh` is present)
   so the `gh` CLI itself is authenticated — see Architecture §8.
+* **A Cursor sandbox cannot select a Cursor API key.** Cursor signs in from the terminal
+  (OAuth). A stored `cursor` secret takes precedence in the host proxy and is rejected
+  inside the sandbox, which leaves the agent in a `Press any key to log in…` loop
+  (upstream [docker/sbx-releases#112](https://github.com/docker/sbx-releases/issues/112)).
+  The form hides that checkbox when the agent is Cursor, Save drops it from the recipe,
+  and Connect/Shell/Rebuild never prompt for it. GitHub and other secrets on a Cursor sandbox
+  stay available.
 
 ---
 
@@ -666,6 +673,30 @@ once in the recipe instead of typed into a terminal after every start.
   preflight band as FR-040/FR-058. `sbx kit` is an experimental upstream command; a schema
   it stops accepting is refused with the CLI's own message instead of failing mid-create.
 
+## FR-061 Open Sandbox Logs
+
+The extension shall extract the logs that survive an agent exit and open them as a file,
+so a Cursor (or any) sandbox that auto-stops after the last session disconnects still has
+a readable error trail. Distinct from FR-055, which is the live stream of `sbx`/`docker`
+calls **this extension** made.
+
+* **Open Logs** is a per-sandbox action (Explorer context menu on a running or stopped
+  instance; palette command for the active sandbox). It writes a snapshot to a temp file
+  (`sandbox-console-<name>-logs.txt` in the OS temp directory, owner-only `0600` when the
+  OS honours file modes) and opens it in the editor. It takes the one-operation lock
+  (FR-054) so Stop/Rebuild cannot finish between the running check and `exec`.
+* The snapshot always includes the host `sandboxd/daemon.log` lines that mention this
+  sandbox (health/list noise dropped; last ~400 matching lines of a 2 MB tail), including
+  when `sbx ls` itself fails — that host file is then the remaining trail.
+* In-sandbox files (`/tmp/sandbox-console-hooks.log`, `/var/log/sbx-kit-startup.log`,
+  service logs, a path listing of other `*.log`) are included **only if the sandbox is
+  still running at the `exec`**, not from an earlier probe. A stopped sandbox is never
+  started just to read logs — `sbx exec` auto-starts and would replay hooks (FR-060), and
+  the CLI has no `--no-start`. Guest stdout is the snapshot file, never the operation log
+  (FR-055).
+* There is no `sbx logs`; this is the host daemon file plus a conservative `exec` cat of
+  known paths. Secret values are not dumped: extra guest files are listed by path only.
+
 ---
 
 # 10. Sandbox Explorer
@@ -749,12 +780,13 @@ Switch Sandbox        — pick the active sandbox from the recipe list (FR-050)
 New Sandbox           — the agent is picked in the form; no per-agent Open commands
 Manage Cached Secrets — list/rename/delete per-project cached secret entries (FR-051)
 Show Log              — reveal the operation log (FR-055)
+Open Logs             — snapshot the active sandbox's daemon + in-sandbox logs (FR-061)
 Check Prerequisites   — re-run the host readiness report (FR-059)
 Refresh
 ```
 
 Explorer-only per-node actions (Architecture §12): `Connect`, `Stop`, `Shell`,
-`Rebuild`, `Edit`, `Delete instance`, `Remove from config`.
+`Rebuild`, `Edit`, `Open Logs`, `Delete instance`, `Remove from config`.
 
 There is no separate Start/Restart/Delete palette command.
 

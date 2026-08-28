@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as blobs from "./blobs";
 import { SandboxRef } from "./sandbox";
 import * as sbx from "./sbx";
-import { serviceLabel } from "./services";
+import { isConflictingSecret, serviceLabel } from "./services";
 
 /**
  * Secret provisioning (FR-032). The recipe lists required service-secret NAMES; this
@@ -30,7 +30,9 @@ export async function missingSecrets(ref: SandboxRef): Promise<string[]> {
       .filter((s) => s.scope === "global" || s.scope === ref.name)
       .map((s) => s.service)
   );
-  return ref.spec.secrets.filter((s) => !satisfied.has(s));
+  return ref.spec.secrets.filter(
+    (s) => !satisfied.has(s) && !isConflictingSecret(ref.spec.agent, s)
+  );
 }
 
 /**
