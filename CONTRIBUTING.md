@@ -34,7 +34,7 @@ and pull requests targeting `main`.
 - Read `docs/Architecture.md` before changing backend behaviour, and verify any
   `sbx` CLI assumption against the upstream
   [Docker Sandboxes docs](https://docs.docker.com/ai/sandboxes/).
-- Substantial changes follow the documentation model (see `CLAUDE.md`): add the next
+- Substantial changes follow the documentation model (see `AGENTS.md`): add the next
   `docs/specs/drafts/00N - <Iteration>.md` spec describing what/why, and update
   `Features.md`/`Architecture.md` to match in the same PR — the canonical docs must
   never drift from shipped code. When the change ships, the spec's status flips to

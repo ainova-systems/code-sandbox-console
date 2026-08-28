@@ -14,7 +14,7 @@ import * as path from "path";
  *
  * Two containment rules this module must keep:
  * - It owns process plumbing only. CLI *strings* stay in `sbx.ts` / `images.ts`
- *   (CLAUDE.md "Backend model") — nothing here knows what an sbx subcommand is.
+ *   (AGENTS.md, "Extension source") — nothing here knows what an sbx subcommand is.
  * - Secret values never reach the channel. `sbx.runWithStdin` (FR-032) logs its header
  *   through `header()` and pipes the value itself outside this runner.
  */
