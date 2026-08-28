@@ -6,7 +6,7 @@ sandboxes:
     title: claude-clone
     group: isolated
     mount: clone
-  # FR-060 lifecycle hooks — this repo's own demo, and the fixture the ext-run-local skill
+  # FR-060 lifecycle hooks — this repo's own demo, and the fixture the vscode-run-local skill
   # walks. Everything lands in ONE file inside the sandbox: /tmp/hooks.log
   #
   #   cat /tmp/hooks.log          (or: tail -f /tmp/hooks.log)

@@ -37,3 +37,12 @@ coverage/
 .sandbox/*.local
 # v0.1 single-file layout (migrated to .sandbox/ on read)
 .sandbox.local
+# Intelligence generated state and tool output
+.intelligence/
+CLAUDE.md
+.claude/*
+!.claude/settings.json
+.cursorrules
+.cursor/*
+!.cursor/settings.json
+intelligence/_backup/

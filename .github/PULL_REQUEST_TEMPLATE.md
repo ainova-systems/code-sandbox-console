@@ -7,7 +7,7 @@
 
 <!-- One or two sentences: what this PR does and the problem it solves.
      Cite FR-0xx IDs where applicable; substantial changes need a docs/specs/00N spec
-     and matching Features.md / Architecture.md updates (see CLAUDE.md). -->
+     and matching Features.md / Architecture.md updates (see AGENTS.md). -->
 
 ## Changes
 

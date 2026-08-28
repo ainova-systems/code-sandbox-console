@@ -1,0 +1,67 @@
+# Intelligence manifest — what this project's AI tooling knows and where it goes.
+# Managed by the intelligence CLI. Reference: https://github.com/ainova-systems/intelligence
+project:
+  name: "code-sandbox-console"
+
+# Schema version of this manifest. The CLI keeps it in step with its engine.
+schema_version: "0.11.0"
+
+# Where content comes from. Nothing here has to exist: a directory that is
+# absent is skipped, so a project consuming only packages authors nothing of
+# its own. To write your own, create the directory and sync — no config edit:
+#   intelligence/rules/context.md      an always-on rule; describe the project,
+#                                      its stack, and the constraints to respect
+#   intelligence/agents/<name>.md      a persona (frontmatter: name, description,
+#                                      tier: heavy|standard|light, access: full|readonly)
+#   intelligence/skills/<name>/SKILL.md  a procedure invoked as /<name>
+# '.intelligence/' is CLI-managed (packages + engine content) — never edit it.
+sources:
+  rules:
+    - ".intelligence/packages/@ainova-systems/core/rules"
+    - ".intelligence/packages/@ainova-systems/sync/rules"
+    - "intelligence/rules"
+  agents:
+    - ".intelligence/packages/@ainova-systems/core/agents"
+    - ".intelligence/packages/@ainova-systems/sync/agents"
+    - "intelligence/agents"
+  skills:
+    - ".intelligence/packages/@ainova-systems/core/skills"
+    - ".intelligence/packages/@ainova-systems/sync/skills"
+    - "intelligence/skills"
+
+# Generated output, one entry per tool. Add or drop tools freely.
+targets:
+  agents:
+    enabled: true
+    output: "AGENTS.md"
+    header: |
+      # Sandbox Console
+
+      Terminal-first VS Code extension that runs AI coding agents in isolated Docker Sandboxes
+      (`sbx` microVMs). TypeScript, bundled with esbuild; one runtime dependency (`yaml`).
+      Gate: `npm run verify`. Project context and invariants: the `sandbox-console` rule below.
+  claude: { enabled: true, output: ".claude" }
+  cursor: { enabled: true, output: ".cursor" }
+
+# Packages are managed with 'intelligence package add|search|list':
+#   intelligence package add @ainova-systems/core       from the registry
+#   intelligence package add github:org/repo            any repo with rules|agents|skills
+# packages:
+#   "@ainova-systems/core":
+#     version: "^0.3.0"
+
+# Registries are this project's TRUST LIST — the ONLY way a package name
+# resolves (there is no built-in catalog and no name->github guessing;
+# registry-less installs are always explicit: github:org/repo, git+<url>).
+# Git repos holding an index.yaml, consulted in order; first to declare a
+# name wins; sources are then pinned by url+sha in intelligence.lock.
+# Managed with 'intelligence registry add|remove'. Delete a line to
+# distrust that catalog — including the default seeded below.
+registries:
+  - "https://github.com/ainova-systems/intelligence-registry.git"
+
+packages:
+  "@ainova-systems/sync":
+    version: "0.11.0"
+  "@ainova-systems/core":
+    version: "^0.3.0"

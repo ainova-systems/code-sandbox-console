@@ -10,8 +10,17 @@ tsconfig.json
 .gitattributes
 .github/**
 .claude/**
+.cursor/**
 .sandbox/**
 docs/**
+# Intelligence sources, package store and manifest — generated tool content and
+# shared rules, none of it part of the shipped extension.
+intelligence/**
+.intelligence/**
+intelligence.yaml
+intelligence.lock
+# Local, gitignored root instructions: vsce ignores .gitignore whenever this file
+# exists, so an untracked CLAUDE.md still ships unless it is listed here.
 CLAUDE.md
 AGENTS.md
 CONTRIBUTING.md
