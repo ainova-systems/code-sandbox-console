@@ -55,7 +55,7 @@ warning is based on.
 | a failure is not swallowed | set a `startup` line to `exit 7`, Save, Stop → Connect | a warning naming the sandbox with **Show Log** / **Open Shell**; `/tmp/sandbox-console-hooks.log` shows `fail startup[n] exit=7`, the commands after it skipped, the sandbox still running |
 | a dead service is not called started | set a `services` line to `exit 3`, Save, Stop → Connect | `fail service[n] exited immediately` with its output quoted beneath, and `=== hooks end ok, 1 service(s) failed to start` |
 | `setup` is the exception | edit the `setup` line, Save | a modal asking for a **Rebuild**, explaining that the install phase only runs while a sandbox is created; declining still confirms the save |
-| the generated CLI agrees | `bash .sandbox/scripts/sbx.sh connect hooks-demo` from Git Bash on a fresh instance | the same kit, runner and evidence — parity is required, and the bash reader supports plain and quoted scalars only, never `- \|` block scalars |
+| the generated CLI agrees | `bash .sandbox/scripts/sbx.sh connect hooks-demo` from Git Bash on a fresh instance | the same kit, runner and evidence — parity is required, and the bash reader supports plain and quoted YAML scalars only, never block scalars |
 
 Writing to `/tmp` keeps both this repository and the sandbox's private clone clean.
 
