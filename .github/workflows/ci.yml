@@ -1,7 +1,13 @@
 # CI: enforce the project's single verification command (`npm run verify` =
 # strict typecheck + esbuild bundle — the same gate developers run locally)
-# plus VSIX packaging. The build is platform-neutral, so a single
-# ubuntu-latest job is enough.
+# plus the packaging checks a release depends on. The build is platform-neutral,
+# so a single ubuntu-latest job is enough.
+#
+# No Node matrix: `verify` is `tsc --noEmit` plus an esbuild bundle, and neither
+# exercises runtime behaviour — repeating them on a second Node version would
+# re-run the same typecheck, not test anything new. The extension runs on the
+# Node that VS Code embeds, which is not CI's anyway. Add a matrix when there is
+# a test suite whose result could actually differ per version.
 name: CI
 
 on:
@@ -10,13 +16,21 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Verify and package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -27,11 +41,24 @@ jobs:
       - name: Verify (typecheck + build)
         run: npm run verify
 
+      # `vsce ls` does not run vscode:prepublish, so the bundle has to exist
+      # first. `verify` already produced it; this makes the dependency explicit
+      # rather than incidental.
+      - name: Build
+        run: npm run build
+
+      # vsce ignores .gitignore once a .vscodeignore exists, so this is the only
+      # thing standing between a new directory and every user's machine.
+      - name: Check VSIX contents
+        run: node scripts/check-package-contents.mjs
+
+      # Named `-ci` so a downloaded artifact can never be mistaken for the
+      # release build, which the Release workflow names with its version.
       - name: Package VSIX
-        run: npx vsce package
+        run: npx vsce package --out sandbox-console-ci.vsix
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: '*.vsix'

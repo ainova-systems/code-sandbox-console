@@ -1,0 +1,32 @@
+# Watches the build toolchain, the one runtime dependency bundled into
+# dist/extension.js (`yaml`), and the Actions used by CI and the release
+# pipeline. Runtime updates are kept in their own group: they change what ships
+# to users, so they deserve a separate read from a devDependency bump.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      runtime-dependencies:
+        dependency-type: production
+        patterns: ['*']
+      dev-dependencies:
+        dependency-type: development
+        patterns: ['*']
+    commit-message:
+      prefix: ''
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ''

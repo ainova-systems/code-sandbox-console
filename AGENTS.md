@@ -49,7 +49,7 @@ Source of truth: `intelligence/` | Sync: `intelligence sync`
 | [intelligence-update](.intelligence/packages/@ainova-systems/sync/skills/intelligence-update/SKILL.md) | Interpret an update plan and verify breaking post-conditions |
 | [spec-draft](intelligence/skills/spec-draft/SKILL.md) | Draft the next append-only iteration spec in docs/specs plus its docs-sync checklist, before implementing a substantial change |
 | [spec-implement](intelligence/skills/spec-implement/SKILL.md) | Implement one iteration spec end to end, ending with the canonical docs synced and the verify gate green |
-| [vscode-publish-marketplace](intelligence/skills/vscode-publish-marketplace/SKILL.md) | Ship a VS Code Marketplace release: pre-upload gates, the human upload gate, then the git release. Owner-invoked only. |
+| [vscode-publish-marketplace](intelligence/skills/vscode-publish-marketplace/SKILL.md) | Ship a VS Code Marketplace release: pre-tag gates, then the tag that triggers the automated release pipeline. Owner-invoked only. |
 | [vscode-run-local](intelligence/skills/vscode-run-local/SKILL.md) | Build, install and manually accept the extension in real VS Code, with a per-FR acceptance checklist |
 
 ### Rules
@@ -212,8 +212,11 @@ CLI invocations; medium is the shared modules a change can ripple through.
 - version_source: package.json
 - tag_format: vX.Y.Z
 
-Publishing to the VS Code Marketplace is not covered by these keys — it is a separate human gate,
-sequenced by the `vscode-publish-marketplace` skill.
+`tagger: maintainer` is the whole human gate: a person pushes the `vX.Y.Z` tag and
+`.github/workflows/release.yml` does the rest — verify, contents check, package, attest, GitHub
+Release, then the VS Code Marketplace. Publishing is **not** a manual upload. The keys above do
+not cover the registry step; `vscode-publish-marketplace` sequences it and `docs/RELEASING.md`
+is the runbook.
 
 ## Documentation
 

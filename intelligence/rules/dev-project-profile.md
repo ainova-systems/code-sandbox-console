@@ -66,8 +66,11 @@ CLI invocations; medium is the shared modules a change can ripple through.
 - version_source: package.json
 - tag_format: vX.Y.Z
 
-Publishing to the VS Code Marketplace is not covered by these keys — it is a separate human gate,
-sequenced by the `vscode-publish-marketplace` skill.
+`tagger: maintainer` is the whole human gate: a person pushes the `vX.Y.Z` tag and
+`.github/workflows/release.yml` does the rest — verify, contents check, package, attest, GitHub
+Release, then the VS Code Marketplace. Publishing is **not** a manual upload. The keys above do
+not cover the registry step; `vscode-publish-marketplace` sequences it and `docs/RELEASING.md`
+is the runbook.
 
 ## Documentation
 
