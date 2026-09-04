@@ -309,11 +309,11 @@
     "install-extension": "vsce package -o sandbox-console.vsix && code --install-extension sandbox-console.vsix --force"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
-    "@types/vscode": "~1.90.0",
+    "@types/node": "^26.4.0",
+    "@types/vscode": "~1.134.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.25.0",
-    "typescript": "^5.5.0"
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "yaml": "^2.9.0"
