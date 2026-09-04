@@ -20,6 +20,10 @@ is simple, but a few conventions are load-bearing — please read this before op
 - `npm run build` — bundle to `dist/extension.js` (esbuild), no typecheck.
 - `npm run watch` — rebuild on change.
 - `npm run package` — produce a `.vsix` (vsce).
+- `node scripts/check-package-contents.mjs` — assert the `.vsix` ships exactly the
+  expected files (run `npm run build` first). CI runs it too: `vsce` honours
+  `.vscodeignore` only, so a new directory reaches every user unless that file
+  lists it — a `.gitignore` or `.git/info/exclude` entry does **not** stop it.
 
 Run/debug: open the folder in VS Code and press **F5** (Extension Development Host).
 
@@ -58,6 +62,11 @@ and pull requests targeting `main`.
 - No identity trailers in commit messages or PR bodies (no `Co-Authored-By`, no names,
   no e-mail addresses).
 - Before you commit, `npm run verify` must be green.
+
+## Releases
+
+A release is one `vX.Y.Z` tag push; the pipeline builds, verifies, attests, publishes
+the GitHub Release and uploads to the Marketplace. See [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Security
 

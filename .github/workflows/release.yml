@@ -1,0 +1,177 @@
+# Release: pushing a `vX.Y.Z` tag builds the VSIX, publishes the GitHub Release
+# with the notes taken from CHANGELOG.md, and — when the credentials are
+# configured — publishes to the Visual Studio Marketplace and Open VSX.
+#
+# Publishing degrades gracefully. Without `VSCE_PAT` / `OVSX_PAT` the workflow
+# still produces a verified, attested GitHub Release and tells you in the job
+# summary that the upload is yours to do by hand. Add the secrets and the same
+# tag push publishes end to end, with nothing else to change.
+#
+# Marketplace versions are write-once: a burned number cannot be reused. Every
+# gate therefore runs BEFORE the first publish step.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and (re)publish, e.g. v0.6.0'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, release and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release and upload the VSIX
+      id-token: write # sign the build provenance attestation
+      attestations: write
+    steps:
+      - name: Resolve the tag
+        id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::'$TAG' is not a vX.Y.Z release tag."; exit 1 ;;
+          esac
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # The extension bundles a runtime dependency (`yaml`) into dist/extension.js,
+      # so the install is not optional even though only one dist file ships.
+      - name: Install dependencies
+        run: npm ci
+
+      # The tag, the manifest and the changelog must tell the same story before
+      # anything is built — a mismatch here is cheap, after publishing it is not.
+      - name: Guard — tag, manifest and changelog agree
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          manifest=$(node -p "require('./package.json').version")
+          if [ "$manifest" != "$VERSION" ]; then
+            echo "::error::Tag is $VERSION but package.json says $manifest."
+            exit 1
+          fi
+          # Written outside the working tree: vsce packages whatever is in the
+          # repository root, so a stray file here ships to every user.
+          node scripts/changelog-section.mjs "$VERSION" > "$RUNNER_TEMP/release-notes.md"
+          echo "Release notes for $VERSION:"
+          cat "$RUNNER_TEMP/release-notes.md"
+
+      # `npm run verify` is strict `tsc --noEmit` plus the esbuild bundle. esbuild
+      # does not type-check, so the typecheck inside verify is what checks the code.
+      - name: Verify (typecheck + build)
+        run: npm run verify
+
+      - name: Check VSIX contents
+        run: node scripts/check-package-contents.mjs
+
+      - name: Package VSIX
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: npx vsce package --out "sandbox-console-$VERSION.vsix"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: sandbox-console-*.vsix
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          asset="sandbox-console-$VERSION.vsix"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists — refreshing its asset."
+            gh release upload "$TAG" "$asset" --clobber
+          else
+            gh release create "$TAG" "$asset" \
+              --verify-tag \
+              --title "Sandbox Console $VERSION" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+
+      # `secrets` is not available to an `if:` expression, so presence is
+      # resolved in a step and the credential itself is handed only to the step
+      # that needs it — never job-level `env`, which would expose it to the
+      # lifecycle scripts `npm ci` runs.
+      - name: Detect publishing credentials
+        id: creds
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -n "$VSCE_PAT" ]; then
+            echo "marketplace=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "marketplace=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$OVSX_PAT" ]; then
+            echo "openvsx=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "openvsx=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to the Visual Studio Marketplace
+        if: steps.creds.outputs.marketplace == 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: npx vsce publish --packagePath "sandbox-console-$VERSION.vsix"
+
+      - name: Publish to Open VSX
+        if: steps.creds.outputs.openvsx == 'true'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: npx --yes ovsx publish "sandbox-console-$VERSION.vsix"
+
+      - name: Summary
+        if: always()
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          MARKETPLACE: ${{ steps.creds.outputs.marketplace }}
+          OPENVSX: ${{ steps.creds.outputs.openvsx }}
+        run: |
+          {
+            echo "## Sandbox Console $VERSION"
+            echo
+            echo "- GitHub Release: [$TAG](${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG)"
+            if [ "$MARKETPLACE" = "true" ]; then
+              echo "- Visual Studio Marketplace: published"
+            else
+              echo "- Visual Studio Marketplace: **skipped** — no \`VSCE_PAT\` secret."
+              echo "  Upload \`sandbox-console-$VERSION.vsix\` from the release page, or add the secret and re-run this workflow with tag \`$TAG\`."
+            fi
+            if [ "$OPENVSX" = "true" ]; then
+              echo "- Open VSX: published"
+            else
+              echo "- Open VSX: **skipped** — no \`OVSX_PAT\` secret."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
