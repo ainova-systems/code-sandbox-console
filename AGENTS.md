@@ -38,10 +38,11 @@ Source of truth: `intelligence/` | Sync: `intelligence sync`
 | [intelligence-add-agent](.intelligence/packages/@ainova-systems/sync/skills/intelligence-add-agent/SKILL.md) | Create new specialized agent |
 | [intelligence-add-rule](.intelligence/packages/@ainova-systems/sync/skills/intelligence-add-rule/SKILL.md) | Create new intelligence rule |
 | [intelligence-add-skill](.intelligence/packages/@ainova-systems/sync/skills/intelligence-add-skill/SKILL.md) | Create new skill |
+| [intelligence-compact-context](.intelligence/packages/@ainova-systems/sync/skills/intelligence-compact-context/SKILL.md) | Reduce rules, agents, and skills without changing behavior or teaching terse output |
 | [intelligence-extract-skill](.intelligence/packages/@ainova-systems/sync/skills/intelligence-extract-skill/SKILL.md) | Extract observed workflow into a reusable skill |
 | [intelligence-install-adapter](.intelligence/packages/@ainova-systems/sync/skills/intelligence-install-adapter/SKILL.md) | Research, implement, and enable a tool adapter |
-| [intelligence-learn-from-context](.intelligence/packages/@ainova-systems/sync/skills/intelligence-learn-from-context/SKILL.md) | Finalize or recover initial Intelligence onboarding, or capture one approved session lesson later |
-| [intelligence-learn-from-repository](.intelligence/packages/@ainova-systems/sync/skills/intelligence-learn-from-repository/SKILL.md) | Tailor Intelligence to an initialized repository |
+| [intelligence-learn-from-context](.intelligence/packages/@ainova-systems/sync/skills/intelligence-learn-from-context/SKILL.md) | Capture one approved lesson from a session in an established Intelligence project |
+| [intelligence-learn-from-repository](.intelligence/packages/@ainova-systems/sync/skills/intelligence-learn-from-repository/SKILL.md) | Recover and complete first-time Intelligence repository onboarding |
 | [intelligence-review-skills](.intelligence/packages/@ainova-systems/sync/skills/intelligence-review-skills/SKILL.md) | Audit the intelligence layer for duplication, drift, size, hardcoded paths and framing |
 | [intelligence-sync](.intelligence/packages/@ainova-systems/sync/skills/intelligence-sync/SKILL.md) | Sync intelligence to enabled adapters |
 | [intelligence-uninstall-adapter](.intelligence/packages/@ainova-systems/sync/skills/intelligence-uninstall-adapter/SKILL.md) | Disable an adapter and assess its generated output |
