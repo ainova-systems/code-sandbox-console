@@ -55,10 +55,10 @@ commit rather than a burned tag.
 
 - `npm ci` — the lockfile is in sync; then `npm run verify`, green.
 - `npm audit` — report the count. Dev-only findings do not block, but say so explicitly.
-- `npm run build`, then `node scripts/check-package-contents.mjs` — the exact expected list and
-  nothing else. Build first: `vsce ls` does not run `vscode:prepublish`, so an unbundled tree has
-  no `dist/` to list. A failure names the offending file; fix `.vscodeignore` and add the file to
-  the script's `EXPECTED` only when it genuinely belongs in the VSIX.
+- `node scripts/check-package-contents.mjs` — the exact expected list and nothing else. Run it
+  after `verify`, which produces the `dist/extension.js` that `vsce ls` needs but does not build
+  itself. A failure names the offending file; fix `.vscodeignore` and add the file to the
+  script's `EXPECTED` only when it genuinely belongs in the VSIX.
 - `node scripts/changelog-section.mjs <x.y.z>` — read the notes as they will appear.
 - Listing sanity: no "Not yet published"-class text; README image paths exist in the repo (they
   resolve against `main` at view time); external links absolute.

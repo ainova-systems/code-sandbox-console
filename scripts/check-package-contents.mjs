@@ -32,15 +32,20 @@ if (!existsSync('dist/extension.js')) {
   process.exit(1);
 }
 
+// `shell: true` with a fixed command string is deliberate: on Windows `npx` is
+// `npx.cmd`, which Node will not resolve without a shell (spawning it with
+// explicit args fails ENOENT), and this script is run locally there as well as
+// in CI. There is no injection surface — the command is a literal with no
+// interpolated input.
 const result = spawnSync('npx vsce ls', { encoding: 'utf8', shell: true });
 if (result.status !== 0) {
   console.error(result.stderr || 'vsce ls failed');
   process.exit(1);
 }
 
-// `vsce ls` prints the prepublish script's output first. Every packaged path is
-// a single whitespace-free token; the noise around it is prose or npm's `>` and
-// node's `(node:...)` prefixes.
+// Keep only the packaged paths. Every one is a single whitespace-free token, so
+// anything containing a space is prose — a vsce warning, say — and npm's `>` and
+// node's `(node:...)` prefixes are dropped by the leading-character test.
 const actual = result.stdout
   .split(/\r?\n/)
   .map((line) => line.trim())

@@ -28,13 +28,13 @@ tag vX.Y.Z  →  guard  →  verify  →  contents  →  package  →  attest  �
    ```bash
    npm ci
    npm run verify                              # strict tsc --noEmit + the esbuild bundle
-   npm run build
    node scripts/check-package-contents.mjs     # exactly the 7 expected files
    node scripts/changelog-section.mjs X.Y.Z    # the release notes, as they will appear
    ```
 
-   Run `build` before the contents check: `vsce ls` does not run `vscode:prepublish`, so an
-   unbundled tree has nothing in `dist/` to list.
+   The contents check needs `dist/extension.js` to exist, because `vsce ls` does not run
+   `vscode:prepublish`. `verify` bundles it, so run the check after `verify` — on its own, in a
+   tree that was never built, it tells you to run `npm run build` first.
 
 5. **Merge to `main`** (the release commit goes through a PR like any other change), then tag
    the merge commit and push the tag:

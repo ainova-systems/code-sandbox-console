@@ -41,12 +41,11 @@ jobs:
       - name: Verify (typecheck + build)
         run: npm run verify
 
-      # `vsce ls` does not run vscode:prepublish, so the bundle has to exist
-      # first. `verify` already produced it; this makes the dependency explicit
-      # rather than incidental.
-      - name: Build
-        run: npm run build
-
+      # `vsce ls` does not run vscode:prepublish, so `dist/extension.js` has to
+      # exist before the check — `verify` bundles it, so no separate build step
+      # is needed. Should `verify` ever stop bundling, this fails with the
+      # script's own "run npm run build first" message rather than silently.
+      #
       # vsce ignores .gitignore once a .vscodeignore exists, so this is the only
       # thing standing between a new directory and every user's machine.
       - name: Check VSIX contents
